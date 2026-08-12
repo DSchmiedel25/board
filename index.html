@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tower Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Saira:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --loam:#1C1512;
+  --clay:#251C18;
+  --rail:#3A2C25;
+  --dust:#E8DCC8;
+  --slate:#8B7A6C;
+  --sodium:#F2A73B;
+  --flag-green:#3FA34D;
+  --flag-red:#C4342B;
+  --flag-yellow:#E5C34A;
+
+  --disp:"Saira Condensed",system-ui,sans-serif;
+  --body:"Saira",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+html{font-size:1.45vh}
+
+body{
+  background:var(--loam);
+  color:var(--dust);
+  font-family:var(--body);
+  height:100vh;
+  overflow:hidden;
+  /* sodium-vapor pool, as if one light hangs over the board */
+  background-image:radial-gradient(120% 80% at 50% -10%, rgba(242,167,59,.09), transparent 60%);
+}
+
+.board{
+  height:100vh;
+  display:grid;
+  grid-template-rows:auto 1fr auto;
+  gap:.9rem;
+  padding:1.1rem 1.3rem;
+}
+
+/* ---------- masthead ---------- */
+.masthead{
+  display:flex;
+  align-items:flex-end;
+  gap:1.6rem;
+  border-bottom:2px solid var(--rail);
+  padding-bottom:.7rem;
+}
+.mast-clock{
+  font-family:var(--mono);
+  font-size:4.6rem;
+  font-weight:700;
+  line-height:.85;
+  letter-spacing:-.03em;
+  font-variant-numeric:tabular-nums;
+}
+.mast-clock .mer{font-size:1.5rem;color:var(--slate);margin-left:.4rem;letter-spacing:0}
+.mast-when{padding-bottom:.35rem}
+.mast-day{
+  font-family:var(--disp);
+  font-size:2.5rem;
+  font-weight:700;
+  line-height:.9;
+  letter-spacing:.02em;
+  color:var(--sodium);
+}
+.mast-date{
+  font-family:var(--mono);
+  font-size:1rem;
+  color:var(--slate);
+  letter-spacing:.18em;
+  margin-top:.25rem;
+}
+.mast-fill{flex:1}
+.mast-now{
+  display:flex;
+  align-items:flex-end;
+  gap:1.4rem;
+  padding-bottom:.35rem;
+}
+.now-temp{
+  font-family:var(--disp);
+  font-size:3.8rem;
+  font-weight:700;
+  line-height:.85;
+}
+.now-temp sup{font-size:1.4rem;vertical-align:super;color:var(--slate)}
+.now-meta{text-align:right;line-height:1.5}
+.now-cond{font-family:var(--disp);font-size:1.5rem;font-weight:600;letter-spacing:.03em}
+.now-sub{font-family:var(--mono);font-size:.85rem;color:var(--slate);letter-spacing:.08em}
+
+/* ---------- grid ---------- */
+.grid{
+  display:grid;
+  grid-template-columns:1.45fr 1fr 1fr;
+  grid-template-rows:1.25fr 1fr;
+  gap:.9rem;
+  min-height:0;
+}
+.hero{grid-row:span 2}
+
+.panel{
+  background:var(--clay);
+  border:1px solid var(--rail);
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+  overflow:hidden;
+}
+.panel-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  padding:.7rem .95rem .55rem;
+  border-bottom:1px solid var(--rail);
+  flex-shrink:0;
+}
+.panel-label{
+  font-family:var(--mono);
+  font-size:.8rem;
+  font-weight:700;
+  letter-spacing:.22em;
+  color:var(--slate);
+}
+.panel-note{font-family:var(--mono);font-size:.78rem;color:var(--rail);letter-spacing:.1em}
+.panel-body{padding:.85rem .95rem;flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* ---------- SIGNATURE: the flag bar ---------- */
+.flag{
+  height:2.6rem;
+  flex-shrink:0;
+  display:flex;
+  align-items:center;
+  padding:0 .95rem;
+  font-family:var(--disp);
+  font-size:1.5rem;
+  font-weight:700;
+  letter-spacing:.16em;
+  color:var(--loam);
+  position:relative;
+}
+.flag::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  background:linear-gradient(180deg,rgba(255,255,255,.22),transparent 55%);
+  pointer-events:none;
+}
+.flag--green{background:var(--flag-green)}
+.flag--red{background:var(--flag-red);color:#F6EDE4}
+.flag--yellow{background:var(--flag-yellow)}
+.flag--standby{
+  background:transparent;
+  color:var(--slate);
+  border-bottom:1px solid var(--rail);
+  font-size:1.15rem;
+}
+.flag--standby::after{display:none}
+.flag-right{margin-left:auto;font-family:var(--mono);font-size:.85rem;letter-spacing:.12em;opacity:.85}
+
+/* ---------- hero ---------- */
+.hero-body{padding:1.1rem .95rem .95rem;flex:1;display:flex;flex-direction:column;min-height:0}
+.hero-eyebrow{
+  font-family:var(--mono);
+  font-size:.82rem;
+  letter-spacing:.22em;
+  color:var(--slate);
+}
+.hero-title{
+  font-family:var(--disp);
+  font-size:4.1rem;
+  font-weight:700;
+  line-height:.92;
+  letter-spacing:-.005em;
+  margin-top:.2rem;
+}
+.hero-sub{
+  font-family:var(--body);
+  font-size:1.15rem;
+  color:var(--slate);
+  margin-top:.35rem;
+}
+.hero-big{
+  font-family:var(--disp);
+  font-size:8.2rem;
+  font-weight:700;
+  line-height:.82;
+  letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;
+  margin-top:.3rem;
+}
+.hero-big small{font-size:2rem;color:var(--slate);letter-spacing:.02em;margin-left:.5rem}
+
+/* lineup board — the three tracks */
+.lineup{margin-top:auto;border-top:1px solid var(--rail)}
+.lineup-row{
+  display:grid;
+  grid-template-columns:.5rem 1fr auto auto;
+  align-items:center;
+  gap:.85rem;
+  padding:.65rem 0;
+  border-bottom:1px solid rgba(58,44,37,.6);
+}
+.lineup-row:last-child{border-bottom:0}
+.dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--rail)}
+.dot--green{background:var(--flag-green)}
+.dot--red{background:var(--flag-red)}
+.dot--yellow{background:var(--flag-yellow)}
+.lineup-name{font-family:var(--disp);font-size:1.5rem;font-weight:600;letter-spacing:.01em}
+.lineup-name span{display:block;font-family:var(--mono);font-size:.72rem;color:var(--slate);letter-spacing:.14em;font-weight:400}
+.lineup-time{font-family:var(--mono);font-size:1.05rem;color:var(--dust);font-variant-numeric:tabular-nums}
+.lineup-state{
+  font-family:var(--mono);
+  font-size:.75rem;
+  letter-spacing:.14em;
+  padding:.2rem .5rem;
+  border:1px solid var(--rail);
+  color:var(--slate);
+  min-width:6.5rem;
+  text-align:center;
+}
+.lineup-state.is-go{color:var(--flag-green);border-color:var(--flag-green)}
+.lineup-state.is-out{color:var(--flag-red);border-color:var(--flag-red)}
+.lineup-state.is-watch{color:var(--flag-yellow);border-color:var(--flag-yellow)}
+
+/* hero stat row (weekday mode) */
+.hero-stats{
+  margin-top:auto;
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:.9rem;
+  border-top:1px solid var(--rail);
+  padding-top:.85rem;
+}
+.stat-k{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;color:var(--slate)}
+.stat-v{font-family:var(--disp);font-size:2.5rem;font-weight:700;line-height:1;margin-top:.15rem;font-variant-numeric:tabular-nums}
+.stat-v em{font-style:normal;font-size:1rem;color:var(--slate);margin-left:.25rem}
+
+/* ---------- calendar ---------- */
+.cal-list{display:flex;flex-direction:column;gap:.55rem;overflow:hidden}
+.cal-item{display:grid;grid-template-columns:4.2rem 1fr;gap:.75rem;align-items:baseline}
+.cal-time{
+  font-family:var(--mono);
+  font-size:.88rem;
+  color:var(--sodium);
+  letter-spacing:.04em;
+  font-variant-numeric:tabular-nums;
+}
+.cal-time.is-allday{color:var(--slate)}
+.cal-title{font-size:1.05rem;line-height:1.25}
+.cal-where{display:block;font-family:var(--mono);font-size:.75rem;color:var(--slate);letter-spacing:.06em;margin-top:.1rem}
+.cal-rule{border-top:1px dashed var(--rail);margin:.35rem 0 .1rem;padding-top:.5rem}
+.cal-rule-label{font-family:var(--mono);font-size:.72rem;letter-spacing:.2em;color:var(--rail)}
+
+/* ---------- weather ---------- */
+.wx-strip{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  border:1px solid var(--rail);
+  flex-shrink:0;
+}
+.wx-cell{padding:.55rem .5rem;border-right:1px solid var(--rail);text-align:center}
+.wx-cell:last-child{border-right:0}
+.wx-k{font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;color:var(--slate)}
+.wx-v{font-family:var(--disp);font-size:1.75rem;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums}
+.wx-hours{display:flex;gap:.4rem;margin-top:.75rem;align-items:flex-end;flex:1;min-height:0}
+.wx-hour{flex:1;display:flex;flex-direction:column;align-items:center;gap:.3rem;justify-content:flex-end;height:100%}
+.wx-bar{width:100%;background:var(--rail);position:relative}
+.wx-bar i{position:absolute;left:0;right:0;bottom:0;background:var(--sodium);display:block}
+.wx-hr{font-family:var(--mono);font-size:.68rem;color:var(--slate)}
+.wx-deg{font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
+.wx-quip{
+  font-family:var(--body);
+  font-size:.95rem;
+  color:var(--slate);
+  border-top:1px solid var(--rail);
+  padding-top:.6rem;
+  margin-top:.7rem;
+  line-height:1.35;
+}
+
+/* ---------- news ---------- */
+.news-list{display:flex;flex-direction:column;gap:.7rem;overflow:hidden}
+.news-item{display:grid;grid-template-columns:auto 1fr;gap:.7rem;align-items:baseline}
+.news-src{
+  font-family:var(--mono);
+  font-size:.68rem;
+  letter-spacing:.1em;
+  color:var(--loam);
+  background:var(--slate);
+  padding:.12rem .38rem;
+  white-space:nowrap;
+}
+.news-head{font-size:1rem;line-height:1.3}
+.news-age{font-family:var(--mono);font-size:.72rem;color:var(--rail);margin-left:.4rem}
+
+/* ---------- projects panel ---------- */
+.proj-grid{display:grid;grid-template-columns:1fr 1fr;gap:.85rem;flex:1;align-content:center}
+.proj-k{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;color:var(--slate)}
+.proj-v{font-family:var(--disp);font-size:2.3rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.proj-v em{font-style:normal;font-size:.95rem;color:var(--sodium);margin-left:.3rem}
+
+/* ---------- status ticker ---------- */
+.ticker{
+  border-top:2px solid var(--rail);
+  padding-top:.55rem;
+  display:flex;
+  align-items:center;
+  gap:.9rem;
+  overflow:hidden;
+}
+.ticker-tag{
+  font-family:var(--mono);
+  font-size:.72rem;
+  font-weight:700;
+  letter-spacing:.2em;
+  color:var(--loam);
+  background:var(--sodium);
+  padding:.2rem .5rem;
+  flex-shrink:0;
+}
+.ticker-track{flex:1;overflow:hidden;white-space:nowrap;min-width:0}
+.ticker-run{display:inline-block;animation:run 46s linear infinite;padding-left:100%}
+.ticker-run span{
+  font-family:var(--mono);
+  font-size:.82rem;
+  letter-spacing:.09em;
+  color:var(--slate);
+}
+.ticker-run span::before{content:"◆";color:var(--rail);margin:0 1.4rem}
+@keyframes run{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+
+/* ---------- mockup-only preview control ---------- */
+.preview{
+  position:fixed;
+  right:.6rem;
+  bottom:.5rem;
+  display:flex;
+  gap:.25rem;
+  z-index:20;
+  opacity:.35;
+  transition:opacity .2s;
+}
+.preview:hover,.preview:focus-within{opacity:1}
+.preview button{
+  font-family:var(--mono);
+  font-size:.7rem;
+  letter-spacing:.1em;
+  background:var(--clay);
+  color:var(--slate);
+  border:1px solid var(--rail);
+  padding:.25rem .5rem;
+  cursor:pointer;
+}
+.preview button[aria-pressed="true"]{background:var(--sodium);color:var(--loam);border-color:var(--sodium)}
+.preview button:focus-visible{outline:2px solid var(--dust);outline-offset:2px}
+
+@media (prefers-reduced-motion:reduce){
+  .ticker-run{animation:none;padding-left:0}
+}
+
+/* portrait / phone: stop pretending to be a wall board */
+@media (max-aspect-ratio:1/1){
+  html{font-size:15px}
+  body{overflow:auto;height:auto}
+  .board{height:auto;grid-template-rows:none}
+  .grid{grid-template-columns:1fr;grid-template-rows:none}
+  .hero{grid-row:auto}
+  .hero-big{font-size:5rem}
+  .hero-title{font-size:2.6rem}
+  .mast-clock{font-size:3rem}
+}
+</style>
+</head>
+<body>
+
+<div class="board">
+
+  <header class="masthead">
+    <div class="mast-when">
+      <div class="mast-day" id="day">WEDNESDAY</div>
+      <div class="mast-date" id="date">AUG 12 2026</div>
+    </div>
+    <div class="mast-clock" id="clock">6:42<span class="mer">AM</span></div>
+    <div class="mast-fill"></div>
+    <div class="mast-now">
+      <div class="now-temp">68<sup>°</sup></div>
+      <div class="now-meta">
+        <div class="now-cond">Clear</div>
+        <div class="now-sub">SCHENECTADY · FEELS 66°</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <!-- HERO -->
+    <section class="panel hero">
+      <div class="flag" id="flag">STANDBY</div>
+      <div class="hero-body" id="heroBody"></div>
+    </section>
+
+    <!-- CALENDAR -->
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-label">ON THE BOOKS</span>
+        <span class="panel-note">ICS · 15 MIN</span>
+      </div>
+      <div class="panel-body">
+        <div class="cal-list" id="calList"></div>
+      </div>
+    </section>
+
+    <!-- WEATHER -->
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-label">SKY</span>
+        <span class="panel-note">OPEN-METEO</span>
+      </div>
+      <div class="panel-body">
+        <div class="wx-strip">
+          <div class="wx-cell"><div class="wx-k">HIGH</div><div class="wx-v">84°</div></div>
+          <div class="wx-cell"><div class="wx-k">RAIN</div><div class="wx-v">20%</div></div>
+          <div class="wx-cell"><div class="wx-k">WIND</div><div class="wx-v">7</div></div>
+          <div class="wx-cell"><div class="wx-k">HUM</div><div class="wx-v">61%</div></div>
+        </div>
+        <div class="wx-hours" id="wxHours"></div>
+        <p class="wx-quip">Dry through the afternoon. A cell builds west of Utica after 6 — worth watching if it tracks east.</p>
+      </div>
+    </section>
+
+    <!-- PROJECTS -->
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-label" id="projLabel">BATHROOMREPORT</span>
+        <span class="panel-note">NIGHTLY BAKE</span>
+      </div>
+      <div class="panel-body">
+        <div class="proj-grid" id="projGrid"></div>
+      </div>
+    </section>
+
+    <!-- NEWS -->
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-label">WIRE</span>
+        <span class="panel-note">RSS · 15 MIN</span>
+      </div>
+      <div class="panel-body">
+        <div class="news-list" id="newsList"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="ticker">
+    <span class="ticker-tag">SYSTEMS</span>
+    <div class="ticker-track">
+      <div class="ticker-run" id="tickerRun"></div>
+    </div>
+  </footer>
+
+</div>
+
+<div class="preview" role="group" aria-label="Mockup preview mode">
+  <button type="button" data-mode="weekday" aria-pressed="true">WEEKDAY</button>
+  <button type="button" data-mode="friday" aria-pressed="false">FRI</button>
+  <button type="button" data-mode="saturday" aria-pressed="false">SAT</button>
+  <button type="button" data-mode="rainout" aria-pressed="false">RAINOUT</button>
+</div>
+
+<script>
+/* ------------------------------------------------------------------
+   MOCK DATA
+   In the real build each block below is replaced by a fetch:
+     tracks   -> /data/dirtcall/status.json   (your Actions output)
+     bathroom -> /data/analytics/latest.json  (nightly bake)
+     calendar -> /data/cal.ics  (parsed with ical.js)
+     weather  -> api.open-meteo.com  (direct, CORS-friendly)
+     news     -> /data/news1.xml   (curl'd by cron, parsed w/ DOMParser)
+     systems  -> pi-hole v6 REST API + local file mtimes
+------------------------------------------------------------------- */
+
+const TRACKS = {
+  albany:  {name:"Albany-Saratoga", town:"MALTA NY",    gates:"5:00", hot:"6:30"},
+  fonda:   {name:"Fonda Speedway",  town:"FONDA NY",    gates:"4:30", hot:"6:00"},
+  lebanon: {name:"Lebanon Valley",  town:"WEST LEBANON NY", gates:"4:00", hot:"5:45"}
+};
+
+const CALENDAR = [
+  {time:"7:30",  title:"Crew huddle — Erie St. site", where:"TRAILER", today:true},
+  {time:"11:00", title:"Inspection walkthrough", where:"3RD FLOOR", today:true},
+  {time:"2:15",  title:"Supplier call — conduit order", where:"PHONE", today:true},
+  {time:"6:00",  title:"Gym", where:"", today:true},
+  {time:"ALL",   title:"Fonda — Firecracker 50", where:"SAT · FONDA NY", today:false},
+  {time:"7:00",  title:"Dinner with Sam", where:"SUN · CAFE CAPRICCIO", today:false}
+];
+
+const NEWS = [
+  {src:"NPR",  head:"Federal transit grant program opens applications for mid-size metros", age:"22m"},
+  {src:"TU",   head:"Capital Region road resurfacing enters second phase", age:"1h"},
+  {src:"AP",   head:"Semiconductor plant expansion adds construction hiring upstate", age:"2h"},
+  {src:"NPR",  head:"Heat advisory issued for the Northeast through the weekend", age:"3h"},
+  {src:"TU",   head:"County approves funding for pedestrian bridge repairs", age:"4h"}
+];
+
+const BATHROOM = [
+  {k:"LOCATIONS",   v:"84,127"},
+  {k:"SCANS TODAY", v:"312", up:"+18"},
+  {k:"NEW REPORTS", v:"27"},
+  {k:"TOP CHAIN",   v:"Kwik Trip"}
+];
+
+const HOURS = [
+  {h:"7A",t:68},{h:"9A",t:73},{h:"11A",t:79},{h:"1P",t:83},
+  {h:"3P",t:84},{h:"5P",t:81},{h:"7P",t:76},{h:"9P",t:71}
+];
+
+const SYSTEMS = [
+  "PI-HOLE — 14,208 QUERIES / 3,117 BLOCKED (21.9%)",
+  "DIRTCALL — LAST FETCH 06:30",
+  "BATHROOMREPORT BAKE — 02:14, 84,127 ROWS, CLEAN",
+  "CALENDAR — SYNCED 06:30",
+  "TAILSCALE — MAC MINI ONLINE",
+  "DISK — 31% USED",
+  "UPTIME — 26 DAYS"
+];
+
+/* ---------- render helpers ---------- */
+
+function raceHero(mode){
+  const running = mode === "saturday" || mode === "rainout"
+    ? [TRACKS.fonda, TRACKS.lebanon]
+    : [TRACKS.albany];
+
+  const states = mode === "rainout"
+    ? ["out","watch"]
+    : running.map(()=>"go");
+
+  const label = {go:"RACING", out:"RAINED OUT", watch:"WATCHING"};
+  const dot   = {go:"dot--green", out:"dot--red", watch:"dot--yellow"};
+
+  const head = mode === "rainout"
+    ? {cls:"flag--red",   text:"RED FLAG",   right:"CALLED 4:12 PM"}
+    : {cls:"flag--green", text:"GREEN FLAG", right:"HOT LAPS IN 2:48"};
+
+  const lead = running[0];
+
+  return {
+    flag: head,
+    body: `
+      <div class="hero-eyebrow">TONIGHT AT THE TRACK</div>
+      <div class="hero-title">${mode === "rainout" ? "Nobody races tonight" : lead.name}</div>
+      <div class="hero-sub">${mode === "rainout"
+        ? "Fonda called it. Lebanon Valley still deciding."
+        : "Gates " + lead.gates + " · Hot laps " + lead.hot + " · " + lead.town}</div>
+      <div class="lineup">
+        ${running.map((t,i)=>`
+          <div class="lineup-row">
+            <span class="dot ${dot[states[i]]}"></span>
+            <div class="lineup-name">${t.name}<span>${t.town}</span></div>
+            <div class="lineup-time">${t.gates} / ${t.hot}</div>
+            <div class="lineup-state is-${states[i]}">${label[states[i]]}</div>
+          </div>`).join("")}
+      </div>`
+  };
+}
+
+function weekdayHero(){
+  return {
+    flag: {cls:"flag--standby", text:"NO RACING TONIGHT", right:"ALBANY-SARATOGA IN 2D 10H"},
+    body: `
+      <div class="hero-eyebrow">BATHROOMREPORT · NATIONWIDE</div>
+      <div class="hero-big">84,127<small>locations</small></div>
+      <div class="hero-sub">312 scans today, up 18 from yesterday. Twenty-seven new reports waiting in FlushPanel.</div>
+      <div class="hero-stats">
+        <div><div class="stat-k">PENDING REVIEW</div><div class="stat-v">27</div></div>
+        <div><div class="stat-k">7-DAY SCANS</div><div class="stat-v">2,104</div></div>
+        <div><div class="stat-k">KO-FI</div><div class="stat-v">$41<em>mo</em></div></div>
+      </div>`
+  };
+}
+
+function render(mode){
+  const h = mode === "weekday" ? weekdayHero() : raceHero(mode);
+
+  const flag = document.getElementById("flag");
+  flag.className = "flag " + h.flag.cls;
+  flag.innerHTML = h.flag.text + `<span class="flag-right">${h.flag.right}</span>`;
+  document.getElementById("heroBody").innerHTML = h.body;
+
+  // projects panel carries whichever project isn't the hero
+  const proj = document.getElementById("projGrid");
+  if(mode === "weekday"){
+    document.getElementById("projLabel").textContent = "NEXT RACE";
+    proj.innerHTML = `
+      <div><div class="proj-k">ALBANY-SARATOGA</div><div class="proj-v">FRI<em>8:00 gates 5</em></div></div>
+      <div><div class="proj-k">RAIN RISK FRI</div><div class="proj-v">25<em>%</em></div></div>
+      <div><div class="proj-k">FONDA</div><div class="proj-v">SAT<em>Firecracker 50</em></div></div>
+      <div><div class="proj-k">EVENTS LEFT</div><div class="proj-v">31<em>of 87</em></div></div>`;
+  } else {
+    document.getElementById("projLabel").textContent = "BATHROOMREPORT";
+    proj.innerHTML = BATHROOM.map(s=>`
+      <div><div class="proj-k">${s.k}</div><div class="proj-v">${s.v}${s.up?`<em>${s.up}</em>`:""}</div></div>`).join("");
+  }
+
+  document.querySelectorAll(".preview button").forEach(b=>
+    b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+}
+
+/* static panels */
+function renderStatic(){
+  const todays = CALENDAR.filter(e=>e.today), later = CALENDAR.filter(e=>!e.today);
+  document.getElementById("calList").innerHTML =
+    todays.map(e=>`
+      <div class="cal-item">
+        <div class="cal-time">${e.time}</div>
+        <div class="cal-title">${e.title}${e.where?`<span class="cal-where">${e.where}</span>`:""}</div>
+      </div>`).join("") +
+    `<div class="cal-rule"><span class="cal-rule-label">LATER THIS WEEK</span></div>` +
+    later.map(e=>`
+      <div class="cal-item">
+        <div class="cal-time ${e.time==="ALL"?"is-allday":""}">${e.time}</div>
+        <div class="cal-title">${e.title}${e.where?`<span class="cal-where">${e.where}</span>`:""}</div>
+      </div>`).join("");
+
+  document.getElementById("newsList").innerHTML = NEWS.map(n=>`
+    <div class="news-item">
+      <span class="news-src">${n.src}</span>
+      <div class="news-head">${n.head}<span class="news-age">${n.age}</span></div>
+    </div>`).join("");
+
+  const lo = Math.min(...HOURS.map(x=>x.t)) - 4, hi = Math.max(...HOURS.map(x=>x.t)) + 2;
+  document.getElementById("wxHours").innerHTML = HOURS.map(x=>{
+    const pct = Math.round(((x.t - lo) / (hi - lo)) * 100);
+    return `<div class="wx-hour">
+      <div class="wx-deg">${x.t}°</div>
+      <div class="wx-bar" style="height:100%"><i style="height:${pct}%"></i></div>
+      <div class="wx-hr">${x.h}</div>
+    </div>`;
+  }).join("");
+
+  document.getElementById("tickerRun").innerHTML =
+    SYSTEMS.map(s=>`<span>${s}</span>`).join("");
+}
+
+/* clock */
+function tick(){
+  const d = new Date();
+  let h = d.getHours(), m = String(d.getMinutes()).padStart(2,"0");
+  const mer = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  document.getElementById("clock").innerHTML = `${h}:${m}<span class="mer">${mer}</span>`;
+  document.getElementById("day").textContent =
+    d.toLocaleDateString("en-US",{weekday:"long"}).toUpperCase();
+  document.getElementById("date").textContent =
+    d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}).toUpperCase();
+}
+
+/* real behavior: pick mode from the day, Fri -> Albany, Sat -> Fonda + Lebanon */
+function modeForToday(){
+  const d = new Date().getDay();
+  return d === 5 ? "friday" : d === 6 ? "saturday" : "weekday";
+}
+
+document.querySelectorAll(".preview button").forEach(b=>
+  b.addEventListener("click",()=>render(b.dataset.mode)));
+
+renderStatic();
+render(modeForToday());
+tick();
+setInterval(tick, 10000);
+</script>
+</body>
+</html>

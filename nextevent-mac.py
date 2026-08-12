@@ -78,6 +78,39 @@ def main():
 
     upcoming.sort(key=lambda x: x[0])
 
+    # --- the rest of the week, for the wall dashboard's lower list
+    week_end = now.replace(hour=23, minute=59) + dt.timedelta(days=6)
+    later = []
+    later_events = store.eventsMatchingPredicate_(
+        store.predicateForEventsWithStartDate_endDate_calendars_(
+            NSDate.dateWithTimeIntervalSince1970_(end_of_day.timestamp()),
+            NSDate.dateWithTimeIntervalSince1970_(week_end.timestamp()),
+            None,
+        )) or []
+
+    for e in later_events:
+        start = e.startDate().timeIntervalSince1970()
+        start = dt.datetime.fromtimestamp(start).astimezone()
+        title = str(e.title() or "")
+        if any(w in title.lower() for w in CALENDAR_SKIP):
+            continue
+        later.append({
+            "day": start.strftime("%a").upper(),
+            "time": "ALL" if e.isAllDay() else start.strftime("%-I:%M"),
+            "title": title,
+            "where": str(e.location() or "").split(",")[0],
+            "sort": start.timestamp(),
+        })
+    later.sort(key=lambda x: x["sort"])
+    for x in later:
+        x.pop("sort")
+
+    today_list = [{
+        "time": s.strftime("%-I:%M"),
+        "title": t,
+        "where": w.split(",")[0],
+    } for s, t, w in upcoming]
+
     if not upcoming:
         out = {"title": "NOTHING LEFT", "where": "REST OF TODAY",
                "time": "", "minutes": None, "more": 0}
@@ -85,16 +118,21 @@ def main():
         start, title, where = upcoming[0]
         out = {
             "title": title[:16],
-            "where": where.split(",")[0][:16],
+            "where": (where or "").split(",")[0][:16],
             "time": start.strftime("%-I:%M"),
             "minutes": int((start - now).total_seconds() // 60),
             "more": len(upcoming) - 1,
         }
 
+    # flat fields above are what the Pixoo reads; the lists are for the wall
+    out["generated"] = now.isoformat()
+    out["today"] = today_list
+    out["later"] = later[:5]
+
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as f:
         json.dump(out, f)
-    print(out)
+    print(f"next: {out['title']} | today: {len(today_list)} | later: {len(out['later'])}")
 
 
 if __name__ == "__main__":

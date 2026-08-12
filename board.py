@@ -628,6 +628,10 @@ def brightness_now():
 # ---------------------------------------------------------------- main
 
 def connect():
+    if not PIXOO_IP:
+        sys.exit("PIXOO_IP is not set in config.py. Find it in the Divoom app "
+                 "under your device's settings, or run:\n"
+                 "  curl -s -X POST https://app.divoom-gz.com/Device/ReturnSameLANDevice")
     from pixoo_client import Pixoo
     return Pixoo(PIXOO_IP)
 

@@ -19,7 +19,7 @@ LAT, LON = 42.8142, -73.9396          # Schenectady
 
 # DirtCall publishes events.json (schedule) and status.json (flags, rain).
 DIRTCALL_BASE = "https://dschmiedel25.github.io/dirtcall/data"
-BATHROOM_URL = "https://bathroomreport.app/data/analytics/latest.json"
+BATHROOM_URL = "https://bathroomreport.app/analytics-data.json"
 
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
 # Calendar -> copy link, then change webcal:// to https://

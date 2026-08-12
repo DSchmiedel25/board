@@ -114,7 +114,7 @@ def build(events_doc, status_doc, now=None):
         # count down to the next gate that hasn't passed
         target, label = None, ""
         for key, text in (("gates", "TO GATES"),
-                          ("hotlaps", "TO HOT LAPS"),
+                          ("hotlaps", "HOT LAPS"),
                           ("race", "TO GREEN")):
             if key in times:
                 when = _at(today, times[key])
@@ -126,7 +126,7 @@ def build(events_doc, status_doc, now=None):
             why = st.get("why") or "CALLED OFF"
             return {"state": "rained", "track": tk.get("short", code),
                     "town": _title(why),
-                    "countdown": times.get("race", ""), "label": "WAS SCHEDULED"}
+                    "countdown": times.get("race", ""), "label": "SCHEDULED"}
 
         if target is None:
             continue                        # night's over, fall through to next
@@ -156,3 +156,50 @@ def build(events_doc, status_doc, now=None):
         "countdown": _countdown(target, now),
         "label": f"{prob}% RAIN" if prob is not None else "TO GATES",
     }
+
+TRACK_ORDER = ["AS", "LV", "FON"]
+TRACK_CODE = {"AS": "AS", "LV": "LV", "FON": "FON"}
+
+
+def track_rows(events_doc, status_doc, now=None):
+    """One row per track: what's next there, and how it looks.
+
+    Tracks with nothing tonight still get a row — knowing Fonda is dark
+    until Saturday is as useful as knowing Albany is green.
+    """
+    now = now or dt.datetime.now().astimezone()
+    today = now.strftime("%Y-%m-%d")
+    tracks = events_doc.get("tracks", {})
+    statuses = (status_doc or {}).get("events", {})
+    races = sorted((e for e in events_doc.get("events", [])
+                    if e.get("type") in RACE_TYPES and e.get("date", "") >= today),
+                   key=lambda e: e["date"])
+
+    rows = []
+    codes = [c for c in TRACK_ORDER if c in tracks] + \
+            [c for c in tracks if c not in TRACK_ORDER]
+
+    for code in codes:
+        nxt = next((e for e in races if e["track"] == code), None)
+        if not nxt:
+            rows.append({"code": TRACK_CODE.get(code, code), "when": "\u2014",
+                         "state": "dark", "prob": None})
+            continue
+
+        st = statuses.get(f"{nxt['date']}|{code}", {})
+        prob = st.get("prob")
+        y, mo, dd = (int(x) for x in nxt["date"].split("-"))
+        when = dt.date(y, mo, dd)
+
+        if nxt["date"] == today:
+            state = _state_from_status(st) or (
+                "watch" if (prob is not None and prob >= 40) else "racing")
+            label = "NOW"
+        else:
+            state = "dark"
+            delta = (when - now.date()).days
+            label = when.strftime("%a").upper() if delta <= 6 else when.strftime("%-m/%-d")
+
+        rows.append({"code": TRACK_CODE.get(code, code), "when": label,
+                     "state": state, "prob": prob})
+    return rows

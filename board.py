@@ -48,6 +48,7 @@ CALENDAR_URL = f"file://{DATA_DIR}/next.json"
 LOAM   = (28, 21, 18)
 DUST   = (232, 220, 200)
 SLATE  = (139, 122, 108)
+RAIL   = (58, 44, 37)
 SODIUM = (242, 167, 59)
 GREEN  = (63, 163, 77)
 RED    = (196, 52, 43)
@@ -67,6 +68,11 @@ DEMO_DIRT = {
     "town": "MALTA NY",
     "countdown": "2:48",
     "label": "HOT LAPS",
+    "rows": [
+        {"code": "AS",  "when": "NOW", "state": "racing", "prob": 5},
+        {"code": "LV",  "when": "SAT", "state": "dark",   "prob": 2},
+        {"code": "FON", "when": "SAT", "state": "dark",   "prob": 2},
+    ],
 }
 
 DEMO_WX = {
@@ -193,6 +199,82 @@ def commas(n):
     return f"{n:,}"
 
 
+# ---------------------------------------------------------------- sprites
+
+# 11x11, drawn on the same grid as the font so they sit level with the type
+SPRITES = {
+"CLEAR": """
+.....#.....
+.#...#...#.
+..#.....#..
+....###....
+...#####...
+#..#####..#
+...#####...
+....###....
+..#.....#..
+.#...#...#.
+.....#.....""",
+"CLOUDY": """
+...........
+...........
+....###....
+..##...##..
+.#.......#.
+#.........#
+#.........#
+.#########.
+...........
+...........
+...........""",
+"RAIN": """
+...........
+....###....
+..##...##..
+.#.......#.
+#.........#
+.#########.
+...........
+..#..#..#..
+.#..#..#...
+..#..#..#..
+.#..#..#...""",
+"SNOW": """
+...........
+....###....
+..##...##..
+.#.......#.
+#.........#
+.#########.
+...........
+..#.#.#.#..
+...#.#.#...
+..#.#.#.#..
+...........""",
+"STORMS": """
+...........
+....###....
+..##...##..
+.#.......#.
+#.........#
+.#########.
+.....###...
+....##.....
+...#####...
+.....##....
+....#......""",
+}
+SPRITE_W = 11
+
+
+def draw_sprite(d, key, x, y, color):
+    rows = SPRITES[key].strip("\n").split("\n")
+    for ry, row in enumerate(rows):
+        for rx, c in enumerate(row):
+            if c == "#":
+                d.point((x + rx, y + ry), fill=color)
+
+
 # ---------------------------------------------------------------- chrome
 
 BAR_H = 16
@@ -223,25 +305,19 @@ def queue_bar(bath):
 
 # WMO weather codes, collapsed to words short enough for the bar
 def wx_word(code):
-    if code == 0:
+    """Four buckets. A wall board doesn't need drizzle-versus-showers; it
+    needs to know whether water is falling."""
+    if code in (0, 1):
         return "CLEAR"
-    if code in (1, 2):
-        return "PARTLY"
-    if code == 3:
+    if code in (2, 3) or code in (45, 48):
         return "CLOUDY"
-    if code in (45, 48):
-        return "FOG"
-    if 51 <= code <= 57:
-        return "DRIZZLE"
-    if 61 <= code <= 67:
-        return "RAIN"
     if 71 <= code <= 77 or code in (85, 86):
         return "SNOW"
-    if 80 <= code <= 82:
-        return "SHOWERS"
     if code >= 95:
         return "STORMS"
-    return "WEATHER"
+    if code >= 51:
+        return "RAIN"
+    return "CLEAR"
 
 
 def wx_bar(wx):
@@ -312,99 +388,116 @@ def canvas():
 # ---------------------------------------------------------------- screens
 
 def screen_flag(dirt, bath, wx, cal):
+    """All three tracks at once. The bar carries tonight's headline; the rows
+    say what each track is doing, so a dark Fonda is as visible as a green
+    Albany."""
     bar_color, bar_text, word = STATES.get(dirt["state"], STATES["standby"])
     img, d = canvas()
-    draw_bar(d, bar_color, word, bar_text, rule=(dirt["state"] == "standby"))
-    accent = SODIUM if dirt["state"] in ("standby", "watch") else DUST
-    stack(d, dirt["track"], dirt["town"], dirt["countdown"], dirt["label"],
-          big_color=accent)
+
+    if dirt["state"] == "standby":
+        draw_bar(d, LOAM, dirt["countdown"] or "DARK", SLATE, rule=True)
+    else:
+        draw_bar(d, bar_color, word, bar_text)
+
+    rows = dirt.get("rows") or []
+    ROW_H, y0 = 12, BAR_H + 4
+    chip = {"racing": GREEN, "rained": RED, "watch": YELLOW, "dark": RAIL}
+
+    for i, r in enumerate(rows[:3]):
+        y = y0 + i * ROW_H
+        d.rectangle([0, y, 2, y + ROW_H - 3], fill=chip.get(r["state"], RAIL))
+        live = r["state"] != "dark"
+        draw_text(d, r["code"], 6, y + 1, DUST if live else SLATE, 2)
+        # two fixed columns so a 3-char code and a 3-char day never collide
+        col = DUST if live else SLATE
+        draw_text(d, r["when"], 34, y + 3, SODIUM if live else SLATE, 1)
+        if r["prob"] is not None:
+            p = f"{r['prob']}%"
+            draw_text(d, p, 62 - text_width(p, 1), y + 3, col, 1)
+
+    draw_footer(d, dirt["label"])
     return img
 
 
-def screen_sites(dirt, bath, wx, cal):
+def screen_traffic(dirt, bath, wx, cal):
+    """Volume and direction together. The sparkline already implies the
+    headline number, so two screens were saying the same thing."""
     img, d = canvas()
-    c, tc, t = queue_bar(bath)
-    draw_bar(d, c, t, tc)
-    arrow = "+" if bath["delta"] > 0 else "-" if bath["delta"] < 0 else ""
-    sub = f"{bath['sessions']} SESS {bath['views']} PV"
-    stack(d, "BATHROOMREPORT", sub, commas(bath["users"]),
-          f"{arrow}{abs(bath['delta'])} YDAY" if bath["delta"] else "USERS",
-          big_color=DUST)
-    return img
 
+    kind, word = bath["health"]
+    if kind != "ok":
+        # health is the exception, not the default — only shout when wrong
+        draw_bar(d, RED if kind == "bad" else YELLOW, word,
+                 DUST if kind == "bad" else LOAM)
+    else:
+        delta = bath["delta"]
+        if delta > 0:
+            draw_bar(d, GREEN, f"UP {delta}", LOAM)
+        elif delta < 0:
+            draw_bar(d, RED, f"DOWN {abs(delta)}", DUST)
+        else:
+            draw_bar(d, SODIUM, "FLAT", LOAM)
 
-def screen_trend(dirt, bath, wx, cal):
-    img, d = canvas()
-    c, tc, t = queue_bar(bath)
-    draw_bar(d, c, t, tc)
-
-    draw_centered(d, "SESSIONS", BAR_H + 5, DUST, 1)
+    draw_centered(d, "BATHROOMREPORT", BAR_H + 4, DUST, 1)
+    draw_centered(d, f"{bath['users']} USERS  {bath['views']} PV",
+                  BAR_H + 11, SLATE, 1)
 
     vals = bath["series"][-7:]
     n = len(vals)
     bw, gap = 7, 1
-    total_w = n * bw + (n - 1) * gap
-    x0 = (64 - total_w) // 2
-    top, bottom = 28, 49
+    x0 = (64 - (n * bw + (n - 1) * gap)) // 2
+    top, bottom = 33, 50
     lo, hi = min(vals) * 0.85, max(vals)
     span = max(hi - lo, 1)
 
     letters = "MTWTFSS"
-    order = []
-    for ds in bath["series_days"][-n:]:
-        try:
-            y, mo, dd = (int(x) for x in ds.split("-"))
-            order.append(dt.date(y, mo, dd).weekday())
-        except Exception:
-            order.append(0)
-
     for i, v in enumerate(vals):
         h = max(2, int((v - lo) / span * (bottom - top)))
         x = x0 + i * (bw + gap)
-        color = DUST if i == n - 1 else SODIUM
-        d.rectangle([x, bottom - h, x + bw - 1, bottom], fill=color)
-        draw_text(d, letters[order[i]], x + 2, 51, SLATE, 1)
+        d.rectangle([x, bottom - h, x + bw - 1, bottom],
+                    fill=DUST if i == n - 1 else SODIUM)
+        try:
+            ds = bath["series_days"][-n:][i]
+            y_, m_, d_ = (int(q) for q in ds.split("-"))
+            draw_text(d, letters[dt.date(y_, m_, d_).weekday()], x + 2, 52, SLATE, 1)
+        except Exception:
+            pass
 
-    draw_footer(d, f"{commas(sum(vals))} WK")
+    draw_footer(d, f"{commas(bath['week_sessions'])} WK")
     return img
 
 
 def screen_source(dirt, bath, wx, cal):
+    """The bar names the referrer, so the loudest thing on screen is the
+    answer rather than a health check that always read the same."""
     img, d = canvas()
-    c, tc, t = queue_bar(bath)
-    draw_bar(d, c, t, tc)
+    name = bath["top_source"].split(".")[0].upper() or "DIRECT"
+    draw_bar(d, SODIUM, name, LOAM)
     stack(d, "TOP REFERRER", bath["top_source"].upper(),
-          commas(bath["top_sessions"]), "SESSIONS",
-          big_color=SODIUM)
+          commas(bath["top_sessions"]), "SESSIONS", big_color=SODIUM)
     return img
 
 
 def screen_weather(dirt, bath, wx, cal):
     img, d = canvas()
-    c, tc, t = wx_bar(wx)
-    draw_bar(d, c, t, tc, rule=(c == LOAM))
+    c, tc, word = wx_bar(wx)
+
+    # sprite and word travel together as one centred group
+    d.rectangle([0, 0, 63, BAR_H], fill=c)
+    tw = text_width(word, BAR_SCALE)
+    x = (64 - (SPRITE_W + 3 + tw)) // 2
+    draw_sprite(d, word, x, 3, tc)
+    draw_text(d, word, x + SPRITE_W + 3, 4, tc, BAR_SCALE)
     stack(d, f"H {wx['high']}°  L {wx['low']}°", f"FEELS {wx['feels']}°",
           f"{wx['temp']}°", f"{wx['rain']}% {wx['wind']}MPH",
           big_color=DUST)
     return img
 
 
-def screen_calendar(dirt, bath, wx, cal):
-    img, d = canvas()
-    c, tc, t = cal_bar(cal)
-    draw_bar(d, c, t, tc, rule=(c == LOAM))
-    more = f"+{cal['more']} TODAY" if cal["more"] else "NOTHING AFTER"
-    stack(d, cal["title"], cal["where"], cal["time"], more,
-          big_color=SODIUM if (cal["minutes"] or 999) <= 60 else DUST)
-    return img
-
-
 SCREENS = {
     "flag": screen_flag,
     "weather": screen_weather,
-    "calendar": screen_calendar,
-    "sites": screen_sites,
-    "trend": screen_trend,
+    "traffic": screen_traffic,
     "source": screen_source,
 }
 
@@ -417,18 +510,14 @@ def is_race_night(now=None):
 
 
 def rotation(now=None):
-    """(screen, seconds) pairs. Three moods: mornings lead with what you
-    need before you leave, race nights hand most of the time to the flag,
-    and the rest of the day belongs to the projects."""
+    """(screen, seconds) pairs. Race nights hand most of the time to the
+    tracks; mornings lead with the sky; otherwise it spreads evenly."""
     now = now or dt.datetime.now()
     if is_race_night(now):
-        return [("flag", 30), ("weather", 8), ("calendar", 6),
-                ("sites", 5), ("trend", 5), ("source", 5)]
+        return [("flag", 30), ("weather", 8), ("traffic", 6), ("source", 5)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("calendar", 16), ("weather", 14), ("flag", 6),
-                ("sites", 8), ("source", 8), ("trend", 6)]
-    return [("calendar", 10), ("weather", 10), ("sites", 10),
-            ("trend", 10), ("source", 8), ("flag", 8)]
+        return [("weather", 16), ("flag", 12), ("traffic", 10), ("source", 8)]
+    return [("flag", 12), ("weather", 12), ("traffic", 12), ("source", 10)]
 
 
 # ---------------------------------------------------------------- data
@@ -520,19 +609,26 @@ def main():
 
     if args.preview:
         os.makedirs(args.preview, exist_ok=True)
-        dirt, bath, wx, cal = DEMO_DIRT, DEMO_BATH, DEMO_WX, DEMO_CAL
-        variants = {
-            "flag-racing": (dirt, bath),
-            "flag-rainout": ({**dirt, "state": "rained", "track": "FONDA",
-                              "town": "FONDA NY", "countdown": "4:12",
-                              "label": "CALLED PM"}, bath),
-            "flag-standby": ({**dirt, "state": "standby", "town": "NEXT UP FRI",
-                              "countdown": "2D 10H", "label": "TO GREEN FLAG"}, bath),
-        }
-        for name, (dd, bb) in variants.items():
-            SCREENS["flag"](dd, bb, wx, cal).save(os.path.join(args.preview, f"{name}.png"))
+        dirt, bath, wx, cal = DEMO_DIRT, DEMO_BATH, DEMO_WX, {}
+        dark = {**dirt, "state": "standby", "countdown": "1D 17H",
+                "label": "TO GREEN",
+                "rows": [{"code": "AS",  "when": "FRI", "state": "dark", "prob": 5},
+                         {"code": "LV",  "when": "SAT", "state": "dark", "prob": 2},
+                         {"code": "FON", "when": "SAT", "state": "dark", "prob": 2}]}
+        sat = {**dirt, "state": "racing", "label": "HOT LAPS",
+               "rows": [{"code": "AS",  "when": "FRI",    "state": "dark",   "prob": 18},
+                        {"code": "LV",  "when": "NOW", "state": "racing", "prob": 2},
+                        {"code": "FON", "when": "NOW", "state": "watch",  "prob": 45}]}
+        rain = {**dirt, "state": "rained", "countdown": "4:12", "label": "CALLED",
+                "rows": [{"code": "AS",  "when": "NOW", "state": "rained", "prob": 85},
+                         {"code": "LV",  "when": "SAT",    "state": "dark",   "prob": 2},
+                         {"code": "FON", "when": "SAT",    "state": "dark",   "prob": 2}]}
+        for name, dd in (("flag-friday", dirt), ("flag-dark", dark),
+                         ("flag-saturday", sat), ("flag-rainout", rain)):
+            SCREENS["flag"](dd, bath, wx, cal).save(
+                os.path.join(args.preview, f"{name}.png"))
             print(name)
-        for name in ("weather", "calendar", "sites", "trend", "source"):
+        for name in ("weather", "traffic", "source"):
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)

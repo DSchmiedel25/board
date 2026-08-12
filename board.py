@@ -591,11 +591,11 @@ def fetch():
     st_doc = _get(f"{DIRTCALL_BASE}/status.json", None, "dirtcall status")
     raw_b = _get(BATHROOM_URL, None, "bathroom")
     raw_w = _get(WEATHER_URL, None, "weather")
-    raw_c = _get(CALENDAR_URL, DEMO_CAL, "calendar")
 
     if ev_doc and st_doc:
         import dirtcall
         dirt = dirtcall.build(ev_doc, st_doc)
+        dirt["rows"] = dirtcall.track_rows(ev_doc, st_doc)
     else:
         dirt = DEMO_DIRT
     if raw_b and "ga4" in raw_b:
@@ -617,14 +617,7 @@ def fetch():
     else:
         wx = DEMO_WX
 
-    cal = {
-        "title": raw_c.get("title", ""),
-        "where": raw_c.get("where", ""),
-        "time": raw_c.get("time", ""),
-        "minutes": raw_c.get("minutes"),
-        "more": raw_c.get("more", 0),
-    }
-    return dirt, bath, wx, cal
+    return dirt, bath, wx, {}
 
 
 def brightness_now():

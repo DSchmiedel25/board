@@ -54,6 +54,16 @@ GREEN  = (63, 163, 77)
 RED    = (196, 52, 43)
 YELLOW = (229, 195, 74)
 
+# BathroomReport's own palette, from its stylesheet. The project screens use
+# it so they read as a different place from the track and weather screens.
+BR_TEAL  = (46, 161, 170)     # #2ea1aa  PWA theme colour
+BR_NAVY  = (11, 25, 42)       # #0b192a  charcoal
+BR_CREAM = (245, 247, 250)    # #f5f7fa
+BR_MUTED = (147, 165, 184)    # #93a5b8
+BR_LINE  = (42, 64, 86)       # #2a4056  panel border
+BR_UP    = (143, 214, 148)    # #8fd694
+BR_DOWN  = (240, 138, 134)    # #f08a86
+
 # flag states: bar color, bar text color, word
 STATES = {
     "racing":  (GREEN,  LOAM,  "RACING"),
@@ -94,6 +104,8 @@ DEMO_BATH = {
     "series": [9, 13, 12, 1, 2, 4, 4],
     "series_days": ["2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08",
                     "2026-08-09", "2026-08-10", "2026-08-11"],
+    "new_users": 1, "errors": 0, "dead": 0, "bots": 1,
+    "bot_share": 100, "engage": 62, "clarity_day": "2026-08-11",
     "week_sessions": 45, "top_source": "facebook.com", "top_sessions": 8,
     "signups": 1,
 }
@@ -385,6 +397,51 @@ def canvas():
     return img, ImageDraw.Draw(img)
 
 
+# ---------------------------------------------------------------- project screens
+
+BR_COL_W = 24        # usable width per column, keeps digits off the divider
+
+
+def br_canvas():
+    img = Image.new("RGB", (64, 64), BR_NAVY)
+    return img, ImageDraw.Draw(img)
+
+
+def br_bar(d, color, word):
+    d.rectangle([0, 0, 63, BAR_H], fill=color)
+    sc = min(BAR_SCALE, fit_scale(word, BAR_SCALE))
+    draw_centered(d, word, (BAR_H - text_height(sc)) // 2 + 1, BR_NAVY, sc)
+
+
+def br_pair(d, left, right):
+    """Two labelled numbers either side of a rule. Both take the same scale so
+    they read as a pair rather than one long number."""
+    d.line([32, 20, 32, 55], fill=BR_LINE)
+
+    def fits(v):
+        for sc in range(4, 0, -1):
+            if text_width(v, sc) <= BR_COL_W:
+                return sc
+        return 1
+
+    vals = [str(left[1]), str(right[1])]
+    nsc = min(fits(v) for v in vals)
+    y = 28 + (20 - text_height(nsc)) // 2
+    for (label, _), val, cx in zip((left, right), vals, (16, 48)):
+        draw_text(d, label, cx - text_width(label, 1) // 2, 21, BR_MUTED, 1)
+        draw_text(d, val, cx - text_width(val, nsc) // 2, y, BR_CREAM, nsc)
+
+
+def br_footer(d, label):
+    t = clock_str()
+    draw_text(d, t, 2, LABEL_Y, BR_MUTED, 1)
+    avail = 62 - (2 + text_width(t, 1) + 4)
+    while label and text_width(label, 1) > avail:
+        label = label[:label.rfind(" ")] if " " in label else label[:-1]
+    if label:
+        draw_text(d, label, 62 - text_width(label, 1), LABEL_Y, BR_MUTED, 1)
+
+
 # ---------------------------------------------------------------- screens
 
 def screen_flag(dirt, bath, wx, cal):
@@ -420,61 +477,38 @@ def screen_flag(dirt, bath, wx, cal):
 
 
 def screen_traffic(dirt, bath, wx, cal):
-    """Volume and direction together. The sparkline already implies the
-    headline number, so two screens were saying the same thing."""
-    img, d = canvas()
-
-    kind, word = bath["health"]
-    if kind != "ok":
-        # health is the exception, not the default — only shout when wrong
-        draw_bar(d, RED if kind == "bad" else YELLOW, word,
-                 DUST if kind == "bad" else LOAM)
+    """Who showed up. The bar is direction, so the headline is the change
+    rather than a number you have to compare against memory."""
+    img, d = br_canvas()
+    x = bath["delta"]
+    if x > 0:
+        br_bar(d, BR_UP, f"UP {x}")
+    elif x < 0:
+        br_bar(d, BR_DOWN, f"DOWN {abs(x)}")
     else:
-        delta = bath["delta"]
-        if delta > 0:
-            draw_bar(d, GREEN, f"UP {delta}", LOAM)
-        elif delta < 0:
-            draw_bar(d, RED, f"DOWN {abs(delta)}", DUST)
-        else:
-            draw_bar(d, SODIUM, "FLAT", LOAM)
+        br_bar(d, BR_TEAL, "FLAT")
 
-    draw_centered(d, "BATHROOMREPORT", BAR_H + 4, DUST, 1)
-    draw_centered(d, f"{bath['users']} USERS  {bath['views']} PV",
-                  BAR_H + 11, SLATE, 1)
-
-    vals = bath["series"][-7:]
-    n = len(vals)
-    bw, gap = 7, 1
-    x0 = (64 - (n * bw + (n - 1) * gap)) // 2
-    top, bottom = 33, 50
-    lo, hi = min(vals) * 0.85, max(vals)
-    span = max(hi - lo, 1)
-
-    letters = "MTWTFSS"
-    for i, v in enumerate(vals):
-        h = max(2, int((v - lo) / span * (bottom - top)))
-        x = x0 + i * (bw + gap)
-        d.rectangle([x, bottom - h, x + bw - 1, bottom],
-                    fill=DUST if i == n - 1 else SODIUM)
-        try:
-            ds = bath["series_days"][-n:][i]
-            y_, m_, d_ = (int(q) for q in ds.split("-"))
-            draw_text(d, letters[dt.date(y_, m_, d_).weekday()], x + 2, 52, SLATE, 1)
-        except Exception:
-            pass
-
-    draw_footer(d, f"{commas(bath['week_sessions'])} WK")
+    br_pair(d, ("USERS", bath["users"]), ("NEW", bath["new_users"]))
+    br_footer(d, f"{commas(bath['week_sessions'])} WK")
     return img
 
 
-def screen_source(dirt, bath, wx, cal):
-    """The bar names the referrer, so the loudest thing on screen is the
-    answer rather than a health check that always read the same."""
-    img, d = canvas()
-    name = bath["top_source"].split(".")[0].upper() or "DIRECT"
-    draw_bar(d, SODIUM, name, LOAM)
-    stack(d, "TOP REFERRER", bath["top_source"].upper(),
-          commas(bath["top_sessions"]), "SESSIONS", big_color=SODIUM)
+def screen_health(dirt, bath, wx, cal):
+    """Quality rather than volume. Silent when things are fine, loud when
+    they aren't — Clarity logged 11 script errors on a day nobody noticed."""
+    img, d = br_canvas()
+
+    kind, word = bath["health"]
+    if kind != "ok":
+        br_bar(d, BR_DOWN, word)                     # bake failed or went stale
+    elif bath["errors"]:
+        br_bar(d, BR_DOWN, f"{bath['errors']} ERRORS")
+    else:
+        br_bar(d, BR_TEAL, "NO ERRORS")
+
+    # "62S" reads as "625" in this font, so the unit lives in the label
+    br_pair(d, ("ACT SEC", bath["engage"]), ("BOTS", bath["bots"]))
+    br_footer(d, f"{bath['dead']} DEAD")
     return img
 
 
@@ -498,7 +532,7 @@ SCREENS = {
     "flag": screen_flag,
     "weather": screen_weather,
     "traffic": screen_traffic,
-    "source": screen_source,
+    "health": screen_health,
 }
 
 
@@ -514,10 +548,10 @@ def rotation(now=None):
     tracks; mornings lead with the sky; otherwise it spreads evenly."""
     now = now or dt.datetime.now()
     if is_race_night(now):
-        return [("flag", 30), ("weather", 8), ("traffic", 6), ("source", 5)]
+        return [("flag", 30), ("weather", 8), ("traffic", 6), ("health", 5)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 16), ("flag", 12), ("traffic", 10), ("source", 8)]
-    return [("flag", 12), ("weather", 12), ("traffic", 12), ("source", 10)]
+        return [("weather", 16), ("flag", 12), ("traffic", 10), ("health", 8)]
+    return [("flag", 12), ("weather", 12), ("traffic", 12), ("health", 10)]
 
 
 # ---------------------------------------------------------------- data
@@ -628,7 +662,7 @@ def main():
             SCREENS["flag"](dd, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
-        for name in ("weather", "traffic", "source"):
+        for name in ("weather", "traffic", "health"):
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)

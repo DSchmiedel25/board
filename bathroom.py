@@ -38,6 +38,7 @@ def build(doc, now=None):
     prev = daily.get(days[-2], {}) if len(days) > 1 else {}
 
     users = latest.get("activeUsers", 0)
+    new_users = latest.get("newUsers", 0)
     sessions = latest.get("sessions", 0)
     views = latest.get("pageViews", 0)
     delta = users - prev.get("activeUsers", users)
@@ -58,10 +59,32 @@ def build(doc, now=None):
             if s.get("source", "").lower() not in junk]
     top = max(real, key=lambda s: s.get("sessions", 0), default=None)
 
+    # --- Clarity: quality signals GA4 doesn't carry
+    cl = (doc or {}).get("clarity", {}).get("daily", {}) or {}
+    cdays = sorted(cl)
+    cur = cl.get(cdays[-1], {}) if cdays else {}
+
+    def cm(key, field="subTotal"):
+        v = cur.get(f"{key}.{field}")
+        return int(v) if isinstance(v, (int, float)) else 0
+
+    errors = cm("ScriptErrorCount") + cm("ErrorClickCount")
+    dead = cm("DeadClickCount")
+    bots = cm("Traffic", "totalBotSessionCount")
+    sess_total = cm("Traffic", "totalSessionCount")
+    engage = cm("EngagementTime", "activeTime")
+
     return {
         "health": health,
+        "errors": errors,
+        "dead": dead,
+        "bots": bots,
+        "bot_share": round(bots / sess_total * 100) if sess_total else 0,
+        "engage": engage,
+        "clarity_day": cdays[-1] if cdays else "",
         "day": days[-1] if days else "",
         "users": users,
+        "new_users": new_users,
         "sessions": sessions,
         "views": views,
         "delta": delta,

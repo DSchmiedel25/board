@@ -59,6 +59,14 @@ def main():
             "more": len(upcoming) - 1,
         }
 
+    out["generated"] = now.isoformat()
+    out["today"] = [
+        {"time": s.strftime("%-I:%M"), "title": t, "where": (w or "").split(",")[0],
+         "minutes": int((s - now).total_seconds() // 60)}
+        for s, t, w in upcoming[:6]
+    ]
+    out["upcoming"] = []
+
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as f:
         json.dump(out, f)

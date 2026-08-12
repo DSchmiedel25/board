@@ -300,7 +300,7 @@ def draw_bar(d, color, text, text_color, rule=False):
     d.rectangle([0, 0, 63, BAR_H], fill=color)
     if rule:
         d.line([0, BAR_H, 63, BAR_H], fill=SLATE)
-    sc = min(BAR_SCALE, fit_scale(text, BAR_SCALE))
+    sc = min(BAR_SCALE, fit_scale(text, BAR_SCALE, pad=1))
     draw_centered(d, text, (BAR_H - text_height(sc)) // 2 + 1, text_color, sc)
 
 
@@ -447,12 +447,14 @@ def br_footer(d, label):
 def screen_flag(dirt, bath, wx, cal):
     """All three tracks at once. The bar carries tonight's headline; the rows
     say what each track is doing, so a dark Fonda is as visible as a green
-    Albany."""
+    Albany. When nothing is running, the soonest track is lit — three equally
+    dim rows make you read all of them to find the one that matters."""
     bar_color, bar_text, word = STATES.get(dirt["state"], STATES["standby"])
     img, d = canvas()
 
-    if dirt["state"] == "standby":
-        draw_bar(d, LOAM, dirt["countdown"] or "DARK", SLATE, rule=True)
+    standby = dirt["state"] == "standby"
+    if standby:
+        draw_bar(d, SODIUM, "DIRT CHK", LOAM)
     else:
         draw_bar(d, bar_color, word, bar_text)
 
@@ -460,17 +462,26 @@ def screen_flag(dirt, bath, wx, cal):
     ROW_H, y0 = 12, BAR_H + 4
     chip = {"racing": GREEN, "rained": RED, "watch": YELLOW, "dark": RAIL}
 
+    # on a standby screen the first row is the next race, so highlight it
+    lit = 0 if standby and rows else -1
+
     for i, r in enumerate(rows[:3]):
         y = y0 + i * ROW_H
-        d.rectangle([0, y, 2, y + ROW_H - 3], fill=chip.get(r["state"], RAIL))
         live = r["state"] != "dark"
-        draw_text(d, r["code"], 6, y + 1, DUST if live else SLATE, 2)
+        hot = (i == lit)
+
+        d.rectangle([0, y, 2, y + ROW_H - 3],
+                    fill=SODIUM if hot else chip.get(r["state"], RAIL))
+        draw_text(d, r["code"], 6, y + 1,
+                  DUST if (live or hot) else SLATE, 2)
+
         # two fixed columns so a 3-char code and a 3-char day never collide
-        col = DUST if live else SLATE
-        draw_text(d, r["when"], 34, y + 3, SODIUM if live else SLATE, 1)
+        draw_text(d, r["when"], 34, y + 3,
+                  SODIUM if (live or hot) else SLATE, 1)
         if r["prob"] is not None:
             p = f"{r['prob']}%"
-            draw_text(d, p, 62 - text_width(p, 1), y + 3, col, 1)
+            draw_text(d, p, 62 - text_width(p, 1), y + 3,
+                      DUST if (live or hot) else SLATE, 1)
 
     draw_footer(d, dirt["label"])
     return img

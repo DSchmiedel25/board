@@ -9,7 +9,7 @@ then `git pull` on the Pi. No SSH editing.
 
 # Divoom app -> your device -> settings. Give it a DHCP reservation in your
 # router so it doesn't move.
-PIXOO_IP = "192.168.1.169"
+PIXOO_IP = "192.168.1.50"
 
 # ---------------------------------------------------------------- location
 

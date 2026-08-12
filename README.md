@@ -1,9 +1,11 @@
 # board
 
-A wall dashboard and a Pixoo-64 status board, both fed by one Raspberry Pi.
+A wall dashboard and a Pixoo-64 status board, fed by one always-on machine —
+a Mac mini or a Raspberry Pi.
 
-- **Wall display** — a 16:9 kiosk page: clock, weather, calendar, news, DirtCall, BathroomReport
-- **Pixoo-64** — six rotating 64×64 screens with a flag bar that always answers "is something happening"
+- **Wall display** — a 16:9 kiosk page: clock, weather, calendar, news, DirtCheck, BathroomReport
+- **Pixoo-64** — four rotating 64×64 screens, each with a bar that answers a
+  different question
 
 Both read from the same `data/` directory. One set of cron jobs feeds them.
 
@@ -117,12 +119,29 @@ launchctl bootout gui/$(id -u)/com.board.pixoo        # stop
 | --- | --- |
 | `config.py` | Everything you edit. Nothing else should need changing. |
 | `board.py` | Draws and pushes the Pixoo-64 screens |
+| `dirtcall.py` | Reads DirtCheck's events + status into flag state and track rows |
+| `bathroom.py` | Reads BathroomReport's GA4 + Clarity analytics |
 | `nextevent.py` | Expands recurring events from a published .ics (Pi) |
 | `nextevent-mac.py` | Reads Calendar.app directly via EventKit (Mac) |
 |  `fetch.py` | Pulls RSS feeds past CORS |
 | `index.html` | The wall dashboard |
 | `setup.sh` | Installs all of the above on a Pi |
 | `setup-mac.sh` | Same, for a Mac mini (launchd instead of systemd) |
+
+## The screens
+
+| Screen | Shows | Bar |
+| --- | --- | --- |
+| `flag` | all three tracks, next date and rain % | flag colour, or `DIRT CHK` when nothing's on |
+| `weather` | high/low, temp, rain and wind | sky condition with a pixel sprite |
+| `traffic` | active users and new users | direction against yesterday |
+| `health` | engagement seconds and bot sessions | error count, or `NO ERRORS` |
+
+Track and weather screens use a warm dark palette; the two BathroomReport
+screens use that project's own navy and teal so they read as a different place.
+
+Rotation has three moods: race nights give the tracks 30 seconds, mornings
+lead with weather, and the rest of the day spreads evenly.
 
 ## Checking on things
 
@@ -142,19 +161,26 @@ layout without touching the Pi.
 so it renders correctly before anything is connected. Two mappings in
 `fetch()` convert your real JSON into what the screens expect:
 
-**DirtCall** — `state` (one of `racing`, `rained`, `watch`, `standby`),
-`track`, `town`, `countdown`, `label`
+Both are wired to the real files and need no mapping changes:
 
-**BathroomReport** — `locations`, `scans_today`, `scans_week` (7 numbers),
-`pending`, `top_chain`
+**DirtCheck** — `events.json` (season schedule + track metadata) and
+`status.json` (per-event flag, rain probability). Handled in `dirtcall.py`.
 
-Change the mappings, not the drawing code.
+**BathroomReport** — `analytics-data.json` at the site root, GA4 daily figures
+plus the Clarity quality metrics. Handled in `bathroom.py`.
+
+If either moves, change `config.py`. If the shape changes, change the mapping
+module, not the drawing code.
 
 ## Notes
 
 - The Pixoo dims to 12% between 10pm and 6am. Adjust in `config.py`.
-- Screen rotation has three moods: mornings lead with calendar and weather,
-  Friday and Saturday evenings hand 30 seconds to the flag, everything else
-  spreads evenly.
+- Everything is drawn with a 3x5 pixel font written into `board.py`, plus
+  11x11 weather sprites. No font files, no anti-aliasing. Edit the string art
+  to change a glyph or an icon.
+- The Pixoo client is `pixoo_client.py` rather than the PyPI `pixoo` package,
+  which needs Python 3.10+. The device API is one HTTP POST.
+- The calendar screen was removed from the Pixoo, but `nextevent-mac.py` still
+  runs for the wall dashboard's calendar panel.
 - If the kiosk page comes up blank, check `http://localhost/data/next.json`
   loads on the Pi first. A 404 there means the cron job hasn't run yet.

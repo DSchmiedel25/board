@@ -25,14 +25,47 @@ say() { printf '\n\033[1;33m▸ %s\033[0m\n' "$1"; }
 
 # ---------------------------------------------------------------- python
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 not found. Install Xcode command line tools first:"
-  echo "  xcode-select --install"
+# macOS ships an old system Python. Find the newest usable one instead of
+# assuming `python3` is fine — PyObjC needs 3.9+.
+find_python() {
+  local c
+  local fw=/Library/Frameworks/Python.framework/Versions
+  for c in python3.14 python3.13 python3.12 python3.11 python3.10 python3.9 \
+           "$fw/3.14/bin/python3" "$fw/3.13/bin/python3" "$fw/3.12/bin/python3" \
+           "$fw/3.11/bin/python3" "$fw/3.10/bin/python3" "$fw/3.9/bin/python3" \
+           /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    if "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null; then
+      echo "$c"; return 0
+    fi
+  done
+  return 1
+}
+
+if ! BASE_PY="$(find_python)"; then
+  cat <<'MSG'
+
+No Python 3.9 or newer found. Install one with Homebrew:
+
+  # if you don't have Homebrew yet:
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+  brew install python@3.12
+
+Or, if Homebrew wants to compile from source (older macOS), skip it and use
+the official installer instead — it's prebuilt and takes two minutes:
+
+  https://www.python.org/downloads/macos/
+  (grab the macOS 64-bit universal2 installer, 3.12 or newer)
+
+Then run this script again.
+
+MSG
   exit 1
 fi
 
-say "Creating virtualenv"
-python3 -m venv "$VENV"
+say "Using $($BASE_PY --version) at $BASE_PY"
+"$BASE_PY" -m venv "$VENV"
 "$VENV/bin/pip" install --quiet --upgrade pip
 "$VENV/bin/pip" install --quiet \
   pillow requests pyobjc-framework-EventKit

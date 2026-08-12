@@ -30,7 +30,7 @@ import urllib.request
 from PIL import Image, ImageDraw
 
 from config import (
-    PIXOO_IP, LAT, LON, DIRTCALL_URL, BATHROOM_URL, DATA_DIR,
+    PIXOO_IP, LAT, LON, DIRTCALL_BASE, BATHROOM_URL, DATA_DIR,
     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
     MORNING, RACE_DAYS, RACE_WINDOW,
 )
@@ -411,18 +411,17 @@ def _get(url, fallback, name):
 def fetch():
     """Adjust the two mappings below to match your real JSON.
     Nothing else in the file needs to change."""
-    raw_d = _get(DIRTCALL_URL, DEMO_DIRT, "dirtcall")
+    ev_doc = _get(f"{DIRTCALL_BASE}/events.json", None, "dirtcall events")
+    st_doc = _get(f"{DIRTCALL_BASE}/status.json", None, "dirtcall status")
     raw_b = _get(BATHROOM_URL, DEMO_BATH, "bathroom")
     raw_w = _get(WEATHER_URL, None, "weather")
     raw_c = _get(CALENDAR_URL, DEMO_CAL, "calendar")
 
-    dirt = {
-        "state": raw_d.get("state", "standby"),
-        "track": raw_d.get("track", ""),
-        "town": raw_d.get("town", ""),
-        "countdown": raw_d.get("countdown", ""),
-        "label": raw_d.get("label", ""),
-    }
+    if ev_doc and st_doc:
+        import dirtcall
+        dirt = dirtcall.build(ev_doc, st_doc)
+    else:
+        dirt = DEMO_DIRT
     bath = {
         "locations": raw_b.get("locations", 0),
         "scans_today": raw_b.get("scans_today", 0),

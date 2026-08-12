@@ -9,7 +9,7 @@ then `git pull` on the Pi. No SSH editing.
 
 # Divoom app -> your device -> settings. Give it a DHCP reservation in your
 # router so it doesn't move.
-PIXOO_IP = "192.168.1.169"
+PIXOO_IP = "192.168.1.50"
 
 # ---------------------------------------------------------------- location
 
@@ -17,7 +17,8 @@ LAT, LON = 42.8142, -73.9396          # Schenectady
 
 # ---------------------------------------------------------------- sources
 
-DIRTCALL_URL = "https://dschmiedel25.github.io/dirtcall/data/status.json"
+# DirtCall publishes events.json (schedule) and status.json (flags, rain).
+DIRTCALL_BASE = "https://dschmiedel25.github.io/dirtcall/data"
 BATHROOM_URL = "https://bathroomreport.app/data/analytics/latest.json"
 
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public

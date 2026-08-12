@@ -24,7 +24,7 @@ sudo apt-get install -y -qq nginx python3-pip git
 
 say "Installing Python libraries"
 pip3 install --break-system-packages -q \
-  pixoo pillow requests icalendar recurring-ical-events
+  pillow requests icalendar recurring-ical-events
 
 # ---------------------------------------------------------------- web root
 

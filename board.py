@@ -462,14 +462,13 @@ def brightness_now():
 # ---------------------------------------------------------------- main
 
 def connect():
-    from pixoo import Pixoo
+    from pixoo_client import Pixoo
     return Pixoo(PIXOO_IP)
 
 
 def push(dev, img):
     dev.set_brightness(brightness_now())
-    dev.draw_image(img)
-    dev.push()
+    dev.push_image(img)
 
 
 def main():

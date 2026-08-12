@@ -119,7 +119,7 @@ launchctl bootout gui/$(id -u)/com.board.pixoo        # stop
 | `board.py` | Draws and pushes the Pixoo-64 screens |
 | `nextevent.py` | Expands recurring events from a published .ics (Pi) |
 | `nextevent-mac.py` | Reads Calendar.app directly via EventKit (Mac) |
-| `fetch.py` | Pulls RSS feeds past CORS |
+|  `fetch.py` | Pulls RSS feeds past CORS |
 | `index.html` | The wall dashboard |
 | `setup.sh` | Installs all of the above on a Pi |
 | `setup-mac.sh` | Same, for a Mac mini (launchd instead of systemd) |

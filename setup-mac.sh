@@ -35,7 +35,7 @@ say "Creating virtualenv"
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --quiet --upgrade pip
 "$VENV/bin/pip" install --quiet \
-  pixoo pillow requests pyobjc-framework-EventKit
+  pillow requests pyobjc-framework-EventKit
 
 # ---------------------------------------------------------------- data dir
 

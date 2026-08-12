@@ -25,8 +25,8 @@ import json
 import os
 import sys
 import time
-import urllib.request
 
+import requests
 from PIL import Image, ImageDraw
 
 from config import (
@@ -434,9 +434,17 @@ def rotation(now=None):
 # ---------------------------------------------------------------- data
 
 def _get(url, fallback, name):
+    """Uses requests rather than urllib. The python.org macOS build ships
+    without a wired-up CA bundle, so urllib fails every HTTPS call with
+    CERTIFICATE_VERIFY_FAILED until you run Install Certificates.command.
+    requests carries its own bundle and just works."""
     try:
-        with urllib.request.urlopen(url, timeout=8) as r:
-            return json.load(r)
+        if url.startswith("file://"):
+            with open(url[7:], "r") as f:
+                return json.load(f)
+        r = requests.get(url, timeout=10, headers={"User-Agent": "board/1.0"})
+        r.raise_for_status()
+        return r.json()
     except Exception as e:
         print(f"{name} fetch failed ({e}); using demo data", file=sys.stderr)
         return fallback

@@ -21,6 +21,12 @@ LAT, LON = 42.8142, -73.9396          # Schenectady
 DIRTCALL_BASE = "https://dschmiedel25.github.io/dirtcall/data"
 BATHROOM_URL = "https://bathroomreport.app/analytics-data.json"
 
+# Jellyfin. The board runs on the same Pi as the server, so localhost is
+# right and the traffic never leaves the box. Create the key in
+# Dashboard -> API Keys and name it something you'll recognise later.
+JELLYFIN_URL = "http://localhost:8096"
+JELLYFIN_KEY = "PUT-A-FRESH-KEY-HERE"
+
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
 # Calendar -> copy link, then change webcal:// to https://
 ICS_URL = "https://p00-caldav.icloud.com/published/2/REPLACE-WITH-YOURS"

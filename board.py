@@ -31,6 +31,7 @@ from PIL import Image, ImageDraw
 
 from config import (
     PIXOO_IP, LAT, LON, DIRTCALL_BASE, BATHROOM_URL, DATA_DIR,
+    JELLYFIN_URL, JELLYFIN_KEY,
     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
     MORNING, RACE_DAYS, RACE_WINDOW,
 )
@@ -63,6 +64,11 @@ BR_MUTED = (147, 165, 184)    # #93a5b8
 BR_LINE  = (42, 64, 86)       # #2a4056  panel border
 BR_UP    = (143, 214, 148)    # #8fd694
 BR_DOWN  = (240, 138, 134)    # #f08a86
+
+# Jellyfin's own two brand colours, so its screens read as a third place
+JF_PURPLE = (170, 92, 195)    # #aa5cc3
+JF_BLUE   = (0, 164, 220)     # #00a4dc
+JF_INK    = (14, 14, 22)      # bar text on either of the above
 
 # flag states: bar color, bar text color, word
 STATES = {
@@ -109,6 +115,17 @@ DEMO_BATH = {
     "week_sessions": 45, "top_source": "facebook.com", "top_sessions": 8,
     "signups": 1,
 }
+
+DEMO_JF = {
+    "playing": True, "title": "THE PITT", "sub": "S1E4", "user": "AMANDA",
+    "paused": False, "pct": 38, "art_id": None, "transcoding": False,
+    "streams": 1, "watchers": 1,
+    "movies": 412, "episodes": 3180, "series": 96,
+}
+
+# Populated by refresh_jf(). Kept module-level so the screens keep the same
+# (dirt, bath, wx, cal) signature as the other four.
+JF = None
 
 # ---------------------------------------------------------------- 3x5 font
 
@@ -205,6 +222,15 @@ def fit_scale(s, max_scale, width=64, pad=2):
         if text_width(s, sc) <= width - pad * 2:
             return sc
     return 1
+
+
+def clip_text(s, scale=1, width=60):
+    """fit_scale shrinks until it fits or runs out of scales. Titles are the
+    one field long enough to overflow even at scale 1, so trim as well."""
+    s = (s or "").upper()
+    while s and text_width(s, scale) > width:
+        s = s[:-1]
+    return s.rstrip(" ,.-")
 
 
 def commas(n):
@@ -552,11 +578,85 @@ def screen_weather(dirt, bath, wx, cal):
     return img
 
 
+def screen_jfnow(dirt, bath, wx, cal):
+    """What's on, with the poster behind it.
+
+    The art is dimmed hard rather than shown at full strength: at 64x64 a
+    poster is texture, not a picture, and the words have to win. The bar
+    carries who — that's the thing you actually want from across the room.
+    """
+    jf = JF or DEMO_JF
+    img, d = canvas()
+
+    art = None
+    if jf.get("art_id"):
+        import jellyfin as _jf
+        art = _jf.poster(JELLYFIN_URL, JELLYFIN_KEY, jf["art_id"])
+    if art is not None:
+        img.paste(art.resize((64, 64)).point(lambda v: int(v * 0.38)), (0, 0))
+        d = ImageDraw.Draw(img)
+
+    if not jf["playing"]:
+        draw_bar(d, LOAM, "IDLE", SLATE, rule=True)
+        sc = min(fit_scale("NOBODY", 2), fit_scale("WATCHING", 2))
+        draw_centered(d, "NOBODY", 27, SLATE, sc)
+        draw_centered(d, "WATCHING", 27 + text_height(sc) + 4, SLATE, sc)
+        draw_footer(d, f"{commas(jf['movies'])} MOV")
+        return img
+
+    if jf["paused"]:
+        draw_bar(d, YELLOW, "PAUSED", LOAM)
+    else:
+        draw_bar(d, JF_PURPLE, clip_text(jf["user"], BAR_SCALE, 58) or "PLAYING",
+                 JF_INK)
+
+    tsc = fit_scale(jf["title"], 2)
+    title = clip_text(jf["title"], tsc)
+    y = 24
+    draw_centered(d, title, y, DUST, tsc)
+    if jf["sub"]:
+        draw_centered(d, clip_text(jf["sub"], 1), y + text_height(tsc) + 3,
+                      SODIUM, 1)
+
+    # progress rail sits above the footer so it never fights the clock
+    pct = jf["pct"]
+    if pct is not None:
+        d.rectangle([2, 52, 61, 53], fill=RAIL)
+        w = int(59 * pct / 100)
+        if w:
+            d.rectangle([2, 52, 2 + w, 53], fill=JF_BLUE)
+
+    label = "TRANSCODE" if jf["transcoding"] else (
+        f"{pct}%" if pct is not None else "")
+    draw_footer(d, label)
+    return img
+
+
+def screen_jflib(dirt, bath, wx, cal):
+    """The library at a glance. Streams drive the bar, because the counts
+    only move on a scan and the streams move all evening."""
+    jf = JF or DEMO_JF
+    img, d = canvas()
+
+    n = jf["streams"]
+    if n:
+        draw_bar(d, JF_PURPLE, f"{n} STREAM" + ("S" if n > 1 else ""), JF_INK)
+    else:
+        draw_bar(d, LOAM, "JELLYFIN", SLATE, rule=True)
+
+    stack(d, f"{commas(jf['movies'])} MOVIES",
+          f"{commas(jf['series'])} SERIES",
+          commas(jf["episodes"]), "EPISODES", big_color=JF_BLUE)
+    return img
+
+
 SCREENS = {
     "flag": screen_flag,
     "weather": screen_weather,
     "traffic": screen_traffic,
     "health": screen_health,
+    "jfnow": screen_jfnow,
+    "jflib": screen_jflib,
 }
 
 
@@ -571,11 +671,21 @@ def rotation(now=None):
     """(screen, seconds) pairs. Race nights hand most of the time to the
     tracks; mornings lead with the sky; otherwise it spreads evenly."""
     now = now or dt.datetime.now()
+
+    # someone watching outranks everything except a green flag — it's the one
+    # thing on this board that's happening in the next room
+    watching = bool(JF and JF.get("playing"))
+
     if is_race_night(now):
-        return [("flag", 30), ("weather", 8), ("traffic", 6), ("health", 5)]
+        r = [("flag", 30), ("weather", 8), ("traffic", 6), ("health", 5)]
+        return r + [("jfnow", 10)] if watching else r
+    if watching:
+        return [("jfnow", 20), ("flag", 8), ("weather", 8), ("jflib", 6)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 16), ("flag", 12), ("traffic", 10), ("health", 8)]
-    return [("flag", 12), ("weather", 12), ("traffic", 12), ("health", 10)]
+        return [("weather", 16), ("flag", 12), ("jflib", 8),
+                ("traffic", 8), ("health", 6)]
+    return [("flag", 12), ("weather", 12), ("jflib", 10),
+            ("traffic", 10), ("health", 8)]
 
 
 # ---------------------------------------------------------------- data
@@ -597,9 +707,23 @@ def _get(url, fallback, name):
         return fallback
 
 
+def refresh_jf():
+    """Sessions change by the second and the server is on localhost, so this
+    runs every frame rather than riding the five-minute fetch. Counts are
+    cached inside the module, so this is one cheap call most of the time."""
+    global JF
+    try:
+        import jellyfin as _jf
+        JF = _jf.build(_jf.sessions(JELLYFIN_URL, JELLYFIN_KEY),
+                       _jf.counts(JELLYFIN_URL, JELLYFIN_KEY))
+    except Exception as e:
+        print(f"jellyfin fetch failed ({e})", file=sys.stderr)
+
+
 def fetch():
     """Adjust the two mappings below to match your real JSON.
     Nothing else in the file needs to change."""
+    refresh_jf()
     ev_doc = _get(f"{DIRTCALL_BASE}/events.json", None, "dirtcall events")
     st_doc = _get(f"{DIRTCALL_BASE}/status.json", None, "dirtcall status")
     raw_b = _get(BATHROOM_URL, None, "bathroom")
@@ -687,6 +811,21 @@ def main():
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
+
+        global JF
+        for label, state in (
+            ("jf-playing", DEMO_JF),
+            ("jf-paused", {**DEMO_JF, "paused": True, "pct": 61}),
+            ("jf-idle", {**DEMO_JF, "playing": False, "streams": 0}),
+        ):
+            JF = state
+            SCREENS["jfnow"](dirt, bath, wx, cal).save(
+                os.path.join(args.preview, f"{label}.png"))
+            print(label)
+        JF = DEMO_JF
+        SCREENS["jflib"](dirt, bath, wx, cal).save(
+            os.path.join(args.preview, "jflib.png"))
+        print("jflib")
         return
 
     dirt, bath, wx, cal = fetch()
@@ -708,6 +847,8 @@ def main():
                 if time.time() - last_fetch > 300:      # refresh data every 5 min
                     dirt, bath, wx, cal = fetch()
                     last_fetch = time.time()
+                else:
+                    refresh_jf()                        # local, so poll it often
                 push(dev, SCREENS[name](dirt, bath, wx, cal))
                 time.sleep(dwell)
 

@@ -25,7 +25,7 @@ BATHROOM_URL = "https://bathroomreport.app/analytics-data.json"
 # right and the traffic never leaves the box. Create the key in
 # Dashboard -> API Keys and name it something you'll recognise later.
 JELLYFIN_URL = "http://localhost:8096"
-JELLYFIN_KEY = "PUT-A-FRESH-KEY-HERE"
+JELLYFIN_KEY = "151ce4d992f74ad2a79ed41cd6e20774"
 
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
 # Calendar -> copy link, then change webcal:// to https://

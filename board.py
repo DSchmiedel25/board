@@ -628,6 +628,13 @@ def screen_weather(dirt, bath, wx, cal):
 PLAY_ICON  = ["#..", "##.", "###", "##.", "#.."]
 PAUSE_ICON = ["#.#", "#.#", "#.#", "#.#", "#.#"]
 
+MARQUEE_FRAMES = 56       # device tops out around 60; leave headroom
+MARQUEE_PXPS   = 18       # pixels per second — slow enough to read
+MARQUEE_GAP    = 12       # blank run between the end and the wrap-around
+RAIL_Y         = 49       # progress rail
+TITLE_Y        = 52       # the row that scrolls
+INFO_Y         = 58       # who's watching, and the year or episode
+
 
 def draw_icon(d, rows, x, y, color):
     for ry, row in enumerate(rows):
@@ -637,12 +644,8 @@ def draw_icon(d, rows, x, y, color):
 
 
 def scrim(img, bands):
-    """Darken bands of rows so type reads over artwork, leaving the middle of
-    the poster alone. bands is [(y0, y1, alpha_at_y0, alpha_at_y1), ...].
-
-    A flat dim over the whole frame was costing more than it bought — at 64px
-    a poster is already only texture, and knocking it to 38% left it as mud.
-    """
+    """Darken bands of rows so type reads over artwork, leaving the rest of
+    the poster alone. bands is [(y0, y1, alpha_at_y0, alpha_at_y1), ...]."""
     over = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     od = ImageDraw.Draw(over)
     for y0, y1, a0, a1 in bands:
@@ -653,77 +656,108 @@ def scrim(img, bands):
     return Image.alpha_composite(img.convert("RGBA"), over).convert("RGB")
 
 
+def text_mask(s):
+    """Render a line of text to a 1-bit mask, width whatever it needs.
+
+    A mask rather than a bitmap: pasting an RGB strip would drop an opaque
+    black box over the poster. The marquee slices windows out of this instead
+    of re-rendering the type on every frame.
+    """
+    w = max(1, text_width(s, 1))
+    m = Image.new("L", (w, GH), 0)
+    draw_text(ImageDraw.Draw(m), s, 0, 0, 255, 1)
+    return m
+
+
+def paste_text(img, mask, xy, color):
+    img.paste(Image.new("RGB", mask.size, color), xy, mask)
+
+
 def screen_jfnow(dirt, bath, wx, cal):
-    """What's on. The poster is the screen; everything else is chrome pushed
-    to the edges — title under a scrim at the top, who's watching small at the
-    bottom. No colour bar, because a 16px band across a 64px panel was eating
-    a quarter of the art to say something the footer can say."""
+    """What's on. The poster gets the panel; the title runs small along the
+    bottom so nothing covers the art.
+
+    Returns a list of frames when the line is too long to sit still — the
+    device loops them itself, so a marquee costs one burst of POSTs instead
+    of a frame every 80ms for the whole dwell.
+    """
     jf = JF or DEMO_JF
-    img, d = canvas()
+
+    if not jf["playing"]:
+        # rotation() drops this screen when nothing is playing, so this only
+        # shows if playback stopped between picking the screen and drawing it
+        img, d = canvas()
+        sc = min(fit_scale("NOTHING", 2), fit_scale("PLAYING", 2))
+        draw_bar(d, LOAM, "IDLE", SLATE, rule=True)
+        draw_centered(d, "NOTHING", 26, SLATE, sc)
+        draw_centered(d, "PLAYING", 26 + text_height(sc) + 4, SLATE, sc)
+        draw_footer(d, "")
+        return img
 
     art = None
     if jf.get("art_id"):
         import jellyfin as _jf
         art = _jf.poster(JELLYFIN_URL, JELLYFIN_KEY, jf["art_id"])
 
-    if not jf["playing"]:
-        # rotation() drops this screen when nothing is playing, so this only
-        # shows if playback stopped between picking the screen and drawing it
-        draw_bar(d, LOAM, "IDLE", SLATE, rule=True)
-        sc = min(fit_scale("NOTHING", 2), fit_scale("PLAYING", 2))
-        draw_centered(d, "NOTHING", 26, SLATE, sc)
-        draw_centered(d, "PLAYING", 26 + text_height(sc) + 4, SLATE, sc)
-        draw_footer(d, "")
-        return img
-
-    lines, tsc = fit_lines(jf["title"], 2)
-    line_h = text_height(tsc) + 2
-    sub = clip_text(jf["sub"], 1) if jf["sub"] else ""
-    block = max(0, len(lines) * line_h - 2) + (3 + text_height(1) if sub else 0)
-    top_end = 2 + block + 2
-
+    # ---- everything that doesn't move, drawn once
+    base, d = canvas()
     if art is not None:
-        img.paste(art.resize((64, 64)), (0, 0))
-        img = scrim(img, [(0, top_end, 235, 120),      # under the title
-                          (top_end + 1, 46, 70, 70),   # a light veil overall
-                          (47, 63, 150, 235)])         # under the rail + footer
-        d = ImageDraw.Draw(img)
-
-    y = 2
-    for line in lines:
-        draw_centered(d, line.rstrip(" ,.-:"), y, DUST, tsc)
-        y += line_h
-    if sub:
-        draw_centered(d, sub, y + 1, SODIUM, 1)
+        base.paste(art.resize((64, 64)), (0, 0))
+        base = scrim(base, [(44, 50, 0, 175), (51, 63, 175, 225)])
+        d = ImageDraw.Draw(base)
 
     pct = jf["pct"]
     rail = SODIUM if jf["paused"] else JF_BLUE
     if pct is not None:
-        d.rectangle([2, 53, 61, 54], fill=RAIL)
+        d.rectangle([2, RAIL_Y, 61, RAIL_Y + 1], fill=RAIL)
         w = int(59 * pct / 100)
         if w:
-            d.rectangle([2, 53, 2 + w, 54], fill=rail)
+            d.rectangle([2, RAIL_Y, 2 + w, RAIL_Y + 1], fill=rail)
 
-    # Footer: who's watching, right-aligned, with a transport glyph so a paused
-    # stream is obvious without reading the name. The clock is chrome and it's
-    # on every other screen, so here it yields to a long name rather than
-    # clipping one — CHRISTOPHER matters, 10:38 doesn't.
-    who = (jf["user"] or "").upper()
-    t = clock_str()
-    room = 62 - (2 + text_width(t, 1) + 4) - 5
-    if text_width(who, 1) > room:
-        t = ""                              # name takes the whole row
-        room = 60 - 5
-    who = clip_text(who, 1, room)
-
-    if t:
-        draw_text(d, t, 2, LABEL_Y, SLATE, 1)
+    # bottom row holds the things that fit: glyph, name, and the year or
+    # episode. Only the title is long enough to need moving.
+    draw_icon(d, PAUSE_ICON if jf["paused"] else PLAY_ICON, 1, INFO_Y, rail)
+    sub = clip_text(jf["sub"], 1, 24) if jf["sub"] else ""
+    if sub:
+        draw_text(d, sub, 62 - text_width(sub, 1), INFO_Y, SODIUM, 1)
+    room = 62 - 6 - (text_width(sub, 1) + 4 if sub else 0)
+    who = clip_text(jf["user"], 1, room)
     if who:
-        x = 62 - text_width(who, 1)
-        draw_text(d, who, x, LABEL_Y, DUST, 1)
-        draw_icon(d, PAUSE_ICON if jf["paused"] else PLAY_ICON,
-                  x - 5, LABEL_Y, rail)
-    return img
+        draw_text(d, who, 6, INFO_Y, DUST, 1)
+
+    # ---- the title, still if it fits and scrolling if it doesn't
+    title = (jf["title"] or "").upper()
+    mask = text_mask(title)
+    window = 62
+
+    if mask.width <= window:
+        paste_text(base, mask, (1 + (window - mask.width) // 2, TITLE_Y), DUST)
+        return base
+
+    loop = mask.width + MARQUEE_GAP
+    step = max(1, -(-loop // MARQUEE_FRAMES))      # ceil, so we stay under cap
+
+    # a double-wide tape means each window is a straight crop, no wrap maths
+    tape = Image.new("L", (loop * 2, GH), 0)
+    tape.paste(mask, (0, 0))
+    tape.paste(mask, (loop, 0))
+
+    frames = []
+    for off in range(0, loop, step):
+        f = base.copy()
+        paste_text(f, tape.crop((off, 0, off + window, GH)), (1, TITLE_Y), DUST)
+        frames.append(f)
+
+    return MarqueeFrames(frames, max(40, int(1000 * step / MARQUEE_PXPS)))
+
+
+class MarqueeFrames(list):
+    """A list of frames that also carries its playback speed, so push() can
+    tell an animation from a still without changing every screen's signature."""
+
+    def __init__(self, frames, speed_ms):
+        super().__init__(frames)
+        self.speed_ms = speed_ms
 
 
 def screen_jflib(dirt, bath, wx, cal):
@@ -867,7 +901,10 @@ def connect():
 
 def push(dev, img):
     dev.set_brightness(brightness_now())
-    dev.push_image(img)
+    if isinstance(img, list):
+        dev.push_frames(img, getattr(img, "speed_ms", 100))
+    else:
+        dev.push_image(img)
 
 
 def main():
@@ -911,9 +948,15 @@ def main():
             ("jf-idle", {**DEMO_JF, "playing": False, "streams": 0}),
         ):
             JF = state
-            SCREENS["jfnow"](dirt, bath, wx, cal).save(
-                os.path.join(args.preview, f"{label}.png"))
-            print(label)
+            out = SCREENS["jfnow"](dirt, bath, wx, cal)
+            if isinstance(out, list):
+                out[0].save(os.path.join(args.preview, f"{label}.gif"),
+                            save_all=True, append_images=out[1:],
+                            duration=getattr(out, "speed_ms", 100), loop=0)
+                print(f"{label} ({len(out)} frames)")
+            else:
+                out.save(os.path.join(args.preview, f"{label}.png"))
+                print(label)
         JF = DEMO_JF
         SCREENS["jflib"](dirt, bath, wx, cal).save(
             os.path.join(args.preview, "jflib.png"))

@@ -72,3 +72,36 @@ class Pixoo:
         self.pic_id += 1
         if self.pic_id > 100000:
             self.reset()
+
+    def push_frames(self, frames, speed_ms=100):
+        """Push a multi-frame animation. The device loops it on its own, so a
+        marquee costs one burst of POSTs rather than a frame every 80ms for
+        the whole dwell.
+
+        Every frame shares a PicID and carries its index in PicOffset. The
+        device is documented at 60 frames; more than that is silently dropped
+        on some firmware, so callers should decimate rather than trust it.
+        """
+        if not frames:
+            return
+        if len(frames) == 1:
+            return self.push_image(frames[0])
+
+        pid = self.pic_id
+        for i, img in enumerate(frames):
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            if img.size != (self.SIZE, self.SIZE):
+                img = img.resize((self.SIZE, self.SIZE))
+            self._post({
+                "Command": "Draw/SendHttpGif",
+                "PicNum": len(frames),
+                "PicWidth": self.SIZE,
+                "PicOffset": i,
+                "PicID": pid,
+                "PicSpeed": int(speed_ms),
+                "PicData": base64.b64encode(img.tobytes()).decode(),
+            })
+        self.pic_id += 1
+        if self.pic_id > 100000:
+            self.reset()

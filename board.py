@@ -226,11 +226,57 @@ def fit_scale(s, max_scale, width=64, pad=2):
 
 def clip_text(s, scale=1, width=60):
     """fit_scale shrinks until it fits or runs out of scales. Titles are the
-    one field long enough to overflow even at scale 1, so trim as well."""
+    one field long enough to overflow even at scale 1, so trim too — whole
+    words first, because a title cut mid-word reads as a rendering fault."""
     s = (s or "").upper()
+    while s and text_width(s, scale) > width and " " in s:
+        s = s[:s.rfind(" ")]
     while s and text_width(s, scale) > width:
         s = s[:-1]
-    return s.rstrip(" ,.-")
+    return s.rstrip(" ,.-:")
+
+
+FILLER = {"THE", "A", "AN", "AND", "OF", "TO", "IN", "ON", "FOR", "&"}
+
+
+def fit_lines(s, max_scale=2, width=60, max_lines=2):
+    """Wrap a title to at most two lines, at the largest scale that holds all
+    of it. Truncating "EVERYTHING EVERYWHERE ALL AT ONCE" down to EVERYTHING
+    loses the title; two smaller lines keep it. Returns (lines, scale)."""
+    s = (s or "").upper()
+    words = s.split()
+    if not words:
+        return [], 1
+
+    def wrap_at(sc):
+        lines, cur = [], ""
+        for w in words:
+            t = (cur + " " + w).strip()
+            if text_width(t, sc) <= width:
+                cur = t
+            else:
+                if cur:
+                    lines.append(cur)
+                cur = w
+        if cur:
+            lines.append(cur)
+        return lines
+
+    for sc in range(max_scale, 0, -1):
+        if any(text_width(w, sc) > width for w in words):
+            continue                      # a single word won't fit; go smaller
+        lines = wrap_at(sc)
+        if len(lines) <= max_lines:
+            return lines, sc
+
+    # nothing fits whole — show as much as two small lines can carry, minus
+    # any dangling article, because "BEYOND THE" reads as a broken string
+    kept = [clip_text(l, 1, width) for l in wrap_at(1)[:max_lines]]
+    while kept and kept[-1].split() and kept[-1].split()[-1] in FILLER:
+        kept[-1] = kept[-1][:kept[-1].rfind(" ")] if " " in kept[-1] else ""
+        if not kept[-1]:
+            kept.pop()
+    return kept, 1
 
 
 def commas(n):
@@ -552,7 +598,8 @@ def screen_health(dirt, bath, wx, cal):
     if kind != "ok":
         br_bar(d, BR_DOWN, word)                     # bake failed or went stale
     elif bath["errors"]:
-        br_bar(d, BR_DOWN, f"{bath['errors']} ERRORS")
+        br_bar(d, BR_DOWN, f"{bath['errors']} ERROR" +
+               ("S" if bath['errors'] != 1 else ""))
     else:
         br_bar(d, BR_TEAL, "NO ERRORS")
 
@@ -597,26 +644,38 @@ def screen_jfnow(dirt, bath, wx, cal):
         d = ImageDraw.Draw(img)
 
     if not jf["playing"]:
+        # rotation() drops this screen when nothing is playing, so this only
+        # shows if playback stopped between picking the screen and drawing it
         draw_bar(d, LOAM, "IDLE", SLATE, rule=True)
-        sc = min(fit_scale("NOBODY", 2), fit_scale("WATCHING", 2))
-        draw_centered(d, "NOBODY", 27, SLATE, sc)
-        draw_centered(d, "WATCHING", 27 + text_height(sc) + 4, SLATE, sc)
-        draw_footer(d, f"{commas(jf['movies'])} MOV")
+        sc = min(fit_scale("NOTHING", 2), fit_scale("PLAYING", 2))
+        draw_centered(d, "NOTHING", 26, SLATE, sc)
+        draw_centered(d, "PLAYING", 26 + text_height(sc) + 4, SLATE, sc)
+        draw_footer(d, "")
         return img
 
     if jf["paused"]:
         draw_bar(d, YELLOW, "PAUSED", LOAM)
     else:
-        draw_bar(d, JF_PURPLE, clip_text(jf["user"], BAR_SCALE, 58) or "PLAYING",
-                 JF_INK)
+        # draw_bar shrinks to fit, so a long name goes small rather than losing
+        # its tail — CHRISTOPHER beats CHRISTO
+        draw_bar(d, JF_PURPLE, clip_text(jf["user"], 1, 60) or "PLAYING", JF_INK)
 
-    tsc = fit_scale(jf["title"], 2)
-    title = clip_text(jf["title"], tsc)
-    y = 24
-    draw_centered(d, title, y, DUST, tsc)
-    if jf["sub"]:
-        draw_centered(d, clip_text(jf["sub"], 1), y + text_height(tsc) + 3,
-                      SODIUM, 1)
+    lines, tsc = fit_lines(jf["title"], 2)
+    line_h = text_height(tsc) + 2
+    block = max(0, len(lines) * line_h - 2)
+    sub = clip_text(jf["sub"], 1) if jf["sub"] else ""
+    if sub:
+        block += 3 + text_height(1)
+
+    # centred between the bar and the progress rail so one- and two-line
+    # titles both sit in the same optical middle
+    top, bottom = 19, 51
+    y = top + max(0, (bottom - top - block) // 2)
+    for line in lines:
+        draw_centered(d, line.rstrip(" ,.-:"), y, DUST, tsc)
+        y += line_h
+    if sub:
+        draw_centered(d, sub, y + 1, SODIUM, 1)
 
     # progress rail sits above the footer so it never fights the clock
     pct = jf["pct"]
@@ -626,9 +685,7 @@ def screen_jfnow(dirt, bath, wx, cal):
         if w:
             d.rectangle([2, 52, 2 + w, 53], fill=JF_BLUE)
 
-    label = "TRANSCODE" if jf["transcoding"] else (
-        f"{pct}%" if pct is not None else "")
-    draw_footer(d, label)
+    draw_footer(d, f"{pct}%" if pct is not None else "")
     return img
 
 
@@ -668,24 +725,22 @@ def is_race_night(now=None):
 
 
 def rotation(now=None):
-    """(screen, seconds) pairs. Race nights hand most of the time to the
-    tracks; mornings lead with the sky; otherwise it spreads evenly."""
-    now = now or dt.datetime.now()
+    """(screen, seconds) pairs.
 
-    # someone watching outranks everything except a green flag — it's the one
-    # thing on this board that's happening in the next room
+    Jellyfin only appears while something is playing. An idle media server
+    has nothing to say that's worth a slot — the counts move once a week.
+    """
+    now = now or dt.datetime.now()
     watching = bool(JF and JF.get("playing"))
 
     if is_race_night(now):
-        r = [("flag", 30), ("weather", 8), ("traffic", 6), ("health", 5)]
-        return r + [("jfnow", 10)] if watching else r
+        r = [("flag", 30), ("weather", 10)]
+        return r + [("jfnow", 12)] if watching else r
     if watching:
-        return [("jfnow", 20), ("flag", 8), ("weather", 8), ("jflib", 6)]
+        return [("jfnow", 24), ("flag", 12), ("weather", 12)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 16), ("flag", 12), ("jflib", 8),
-                ("traffic", 8), ("health", 6)]
-    return [("flag", 12), ("weather", 12), ("jflib", 10),
-            ("traffic", 10), ("health", 8)]
+        return [("weather", 20), ("flag", 16)]
+    return [("flag", 16), ("weather", 16)]
 
 
 # ---------------------------------------------------------------- data
@@ -726,7 +781,7 @@ def fetch():
     refresh_jf()
     ev_doc = _get(f"{DIRTCALL_BASE}/events.json", None, "dirtcall events")
     st_doc = _get(f"{DIRTCALL_BASE}/status.json", None, "dirtcall status")
-    raw_b = _get(BATHROOM_URL, None, "bathroom")
+    raw_b = None                    # BathroomReport screens are out of the rotation
     raw_w = _get(WEATHER_URL, None, "weather")
 
     if ev_doc and st_doc:

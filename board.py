@@ -625,13 +625,39 @@ def screen_weather(dirt, bath, wx, cal):
     return img
 
 
-def screen_jfnow(dirt, bath, wx, cal):
-    """What's on, with the poster behind it.
+PLAY_ICON  = ["#..", "##.", "###", "##.", "#.."]
+PAUSE_ICON = ["#.#", "#.#", "#.#", "#.#", "#.#"]
 
-    The art is dimmed hard rather than shown at full strength: at 64x64 a
-    poster is texture, not a picture, and the words have to win. The bar
-    carries who — that's the thing you actually want from across the room.
+
+def draw_icon(d, rows, x, y, color):
+    for ry, row in enumerate(rows):
+        for rx, c in enumerate(row):
+            if c == "#":
+                d.point((x + rx, y + ry), fill=color)
+
+
+def scrim(img, bands):
+    """Darken bands of rows so type reads over artwork, leaving the middle of
+    the poster alone. bands is [(y0, y1, alpha_at_y0, alpha_at_y1), ...].
+
+    A flat dim over the whole frame was costing more than it bought — at 64px
+    a poster is already only texture, and knocking it to 38% left it as mud.
     """
+    over = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    od = ImageDraw.Draw(over)
+    for y0, y1, a0, a1 in bands:
+        span = max(1, y1 - y0)
+        for y in range(y0, y1 + 1):
+            a = int(a0 + (a1 - a0) * (y - y0) / span)
+            od.line([0, y, 63, y], fill=(0, 0, 0, max(0, min(255, a))))
+    return Image.alpha_composite(img.convert("RGBA"), over).convert("RGB")
+
+
+def screen_jfnow(dirt, bath, wx, cal):
+    """What's on. The poster is the screen; everything else is chrome pushed
+    to the edges — title under a scrim at the top, who's watching small at the
+    bottom. No colour bar, because a 16px band across a 64px panel was eating
+    a quarter of the art to say something the footer can say."""
     jf = JF or DEMO_JF
     img, d = canvas()
 
@@ -639,9 +665,6 @@ def screen_jfnow(dirt, bath, wx, cal):
     if jf.get("art_id"):
         import jellyfin as _jf
         art = _jf.poster(JELLYFIN_URL, JELLYFIN_KEY, jf["art_id"])
-    if art is not None:
-        img.paste(art.resize((64, 64)).point(lambda v: int(v * 0.38)), (0, 0))
-        d = ImageDraw.Draw(img)
 
     if not jf["playing"]:
         # rotation() drops this screen when nothing is playing, so this only
@@ -653,39 +676,53 @@ def screen_jfnow(dirt, bath, wx, cal):
         draw_footer(d, "")
         return img
 
-    if jf["paused"]:
-        draw_bar(d, YELLOW, "PAUSED", LOAM)
-    else:
-        # draw_bar shrinks to fit, so a long name goes small rather than losing
-        # its tail — CHRISTOPHER beats CHRISTO
-        draw_bar(d, JF_PURPLE, clip_text(jf["user"], 1, 60) or "PLAYING", JF_INK)
-
     lines, tsc = fit_lines(jf["title"], 2)
     line_h = text_height(tsc) + 2
-    block = max(0, len(lines) * line_h - 2)
     sub = clip_text(jf["sub"], 1) if jf["sub"] else ""
-    if sub:
-        block += 3 + text_height(1)
+    block = max(0, len(lines) * line_h - 2) + (3 + text_height(1) if sub else 0)
+    top_end = 2 + block + 2
 
-    # centred between the bar and the progress rail so one- and two-line
-    # titles both sit in the same optical middle
-    top, bottom = 19, 51
-    y = top + max(0, (bottom - top - block) // 2)
+    if art is not None:
+        img.paste(art.resize((64, 64)), (0, 0))
+        img = scrim(img, [(0, top_end, 235, 120),      # under the title
+                          (top_end + 1, 46, 70, 70),   # a light veil overall
+                          (47, 63, 150, 235)])         # under the rail + footer
+        d = ImageDraw.Draw(img)
+
+    y = 2
     for line in lines:
         draw_centered(d, line.rstrip(" ,.-:"), y, DUST, tsc)
         y += line_h
     if sub:
         draw_centered(d, sub, y + 1, SODIUM, 1)
 
-    # progress rail sits above the footer so it never fights the clock
     pct = jf["pct"]
+    rail = SODIUM if jf["paused"] else JF_BLUE
     if pct is not None:
-        d.rectangle([2, 52, 61, 53], fill=RAIL)
+        d.rectangle([2, 53, 61, 54], fill=RAIL)
         w = int(59 * pct / 100)
         if w:
-            d.rectangle([2, 52, 2 + w, 53], fill=JF_BLUE)
+            d.rectangle([2, 53, 2 + w, 54], fill=rail)
 
-    draw_footer(d, f"{pct}%" if pct is not None else "")
+    # Footer: who's watching, right-aligned, with a transport glyph so a paused
+    # stream is obvious without reading the name. The clock is chrome and it's
+    # on every other screen, so here it yields to a long name rather than
+    # clipping one — CHRISTOPHER matters, 10:38 doesn't.
+    who = (jf["user"] or "").upper()
+    t = clock_str()
+    room = 62 - (2 + text_width(t, 1) + 4) - 5
+    if text_width(who, 1) > room:
+        t = ""                              # name takes the whole row
+        room = 60 - 5
+    who = clip_text(who, 1, room)
+
+    if t:
+        draw_text(d, t, 2, LABEL_Y, SLATE, 1)
+    if who:
+        x = 62 - text_width(who, 1)
+        draw_text(d, who, x, LABEL_Y, DUST, 1)
+        draw_icon(d, PAUSE_ICON if jf["paused"] else PLAY_ICON,
+                  x - 5, LABEL_Y, rail)
     return img
 
 

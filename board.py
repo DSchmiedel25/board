@@ -460,7 +460,22 @@ def screen_flag(dirt, bath, wx, cal):
 
     rows = dirt.get("rows") or []
     ROW_H, y0 = 12, BAR_H + 4
-    chip = {"racing": GREEN, "rained": RED, "watch": YELLOW, "dark": RAIL}
+
+    def risk_chip(r):
+        """The chip is rain risk, not race state — that way it carries
+        information every day of the week rather than only on race nights.
+        'Is it happening now' is answered by NOW in the day column and by the
+        bar going green."""
+        if r["state"] == "rained":
+            return RED
+        p = r["prob"]
+        if p is None:
+            return RAIL
+        if p >= 60:
+            return RED
+        if p >= 30:
+            return YELLOW
+        return GREEN
 
     # on a standby screen the first row is the next race, so highlight it
     lit = 0 if standby and rows else -1
@@ -470,10 +485,8 @@ def screen_flag(dirt, bath, wx, cal):
         live = r["state"] != "dark"
         hot = (i == lit)
 
-        d.rectangle([0, y, 2, y + ROW_H - 3],
-                    fill=SODIUM if hot else chip.get(r["state"], RAIL))
-        draw_text(d, r["code"], 6, y + 1,
-                  DUST if (live or hot) else SLATE, 2)
+        d.rectangle([0, y, 2, y + ROW_H - 3], fill=risk_chip(r))
+        draw_text(d, r["code"], 6, y + 1, DUST if (live or hot) else SLATE, 2)
 
         # two fixed columns so a 3-char code and a 3-char day never collide
         draw_text(d, r["when"], 34, y + 3,

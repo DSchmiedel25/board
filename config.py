@@ -25,11 +25,17 @@ BATHROOM_URL = "https://bathroomreport.app/analytics-data.json"
 # right and the traffic never leaves the box. Create the key in
 # Dashboard -> API Keys and name it something you'll recognise later.
 JELLYFIN_URL = "http://localhost:8096"
-JELLYFIN_KEY = "151ce4d992f74ad2a79ed41cd6e20774"
+JELLYFIN_KEY = "PUT-A-FRESH-KEY-HERE"
 
 # LIFX bulb near the TV. lifx_jf.py caches its MAC on first discovery, so this
 # only has to be right once — give the bulb a DHCP reservation anyway.
 LIFX_IP = "192.168.1.218"
+
+# Only follow this user's playback. Someone else streaming from another house
+# should not repaint a lamp in this room. Set to None to follow any stream,
+# or use LIFX_DEVICE instead to tie the bulb to one screen.
+LIFX_USER = "Dave"
+LIFX_DEVICE = None          # e.g. "Living Room Apple TV" — matched loosely
 
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
 # Calendar -> copy link, then change webcal:// to https://

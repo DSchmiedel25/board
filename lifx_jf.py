@@ -28,7 +28,8 @@ import time
 from lifxlan import LifxLAN, Light
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import JELLYFIN_URL, JELLYFIN_KEY, LIFX_IP     # noqa: E402
+from config import (JELLYFIN_URL, JELLYFIN_KEY, LIFX_IP,   # noqa: E402
+                    LIFX_USER, LIFX_DEVICE)
 import jellyfin                                            # noqa: E402
 
 CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".lifx.json")
@@ -167,7 +168,8 @@ class Follower:
 
 def read_jf():
     return jellyfin.build(jellyfin.sessions(JELLYFIN_URL, JELLYFIN_KEY),
-                          jellyfin.counts(JELLYFIN_URL, JELLYFIN_KEY))
+                          jellyfin.counts(JELLYFIN_URL, JELLYFIN_KEY),
+                          user=LIFX_USER, device=LIFX_DEVICE)
 
 
 def main():

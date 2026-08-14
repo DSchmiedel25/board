@@ -94,9 +94,22 @@ def _pct(sess, item):
     return max(0, min(100, round(pos / total * 100)))
 
 
-def build(sess_list, count_doc):
-    """One dict, whether or not anything is playing. Screens read it directly."""
+def build(sess_list, count_doc, user=None, device=None):
+    """One dict, whether or not anything is playing. Screens read it directly.
+
+    user/device narrow which stream counts. The Pixoo wants any of them — it's
+    a house-wide board. The lamp wants one room, or it repaints itself when
+    somebody else starts a film in another building.
+    """
     playing = [s for s in (sess_list or []) if s.get("NowPlayingItem")]
+    if user:
+        playing = [s for s in playing
+                   if (s.get("UserName") or "").lower() == user.lower()]
+    if device:
+        d = device.lower()
+        playing = [s for s in playing
+                   if d in (s.get("DeviceName") or "").lower()
+                   or d in (s.get("Client") or "").lower()]
     doc = count_doc or {}
 
     out = {

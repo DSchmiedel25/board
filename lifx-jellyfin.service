@@ -1,0 +1,15 @@
+[Unit]
+Description=LIFX bulb follows Jellyfin playback
+After=network-online.target jellyfin.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jellyfin
+WorkingDirectory=/home/jellyfin/board
+ExecStart=/usr/bin/python3 /home/jellyfin/board/lifx_jf.py --loop
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

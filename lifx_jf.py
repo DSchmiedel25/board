@@ -29,7 +29,7 @@ from lifxlan import LifxLAN, Light
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (JELLYFIN_URL, JELLYFIN_KEY, LIFX_IP,   # noqa: E402
-                    LIFX_USER, LIFX_DEVICE)
+                    LIFX_USER, LIFX_DEVICE, LIFX_AUTO_POWER)
 import jellyfin                                            # noqa: E402
 
 CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".lifx.json")
@@ -118,6 +118,7 @@ class Follower:
         self.bulb = bulb
         self.saved = None          # colour + power before we took over
         self.current_art = None
+        self.was_playing = False   # so auto-on fires on the edge, not every tick
 
     def _capture(self):
         if self.saved is None:
@@ -128,8 +129,15 @@ class Follower:
             return
         color, power = self.saved
         try:
-            self.bulb.set_color(color, duration=RESTORE_MS)
-            self.bulb.set_power(power)
+            if LIFX_AUTO_POWER:
+                # fade out, then put the old colour back while it's dark so
+                # the next manual switch-on looks the way it did before
+                self.bulb.set_power(False, duration=RESTORE_MS)
+                time.sleep(RESTORE_MS / 1000 + 0.2)
+                self.bulb.set_color(color, duration=0)
+            else:
+                self.bulb.set_color(color, duration=RESTORE_MS)
+                self.bulb.set_power(power)
         except Exception as e:
             print(f"restore failed: {e}", file=sys.stderr)
         self.saved = None
@@ -137,13 +145,23 @@ class Follower:
         print("released")
 
     def apply(self, jf):
-        if not jf["playing"]:
+        playing = jf["playing"]
+        starting = playing and not self.was_playing
+        self.was_playing = playing
+
+        if not playing:
             self.release()
             return
 
-        # never turn a dark room on by ourselves
         if self.saved is None and not self.bulb.get_power():
-            return
+            if not (LIFX_AUTO_POWER and starting):
+                # Either auto-power is off, or the bulb was switched off by
+                # hand part-way through. Switching it back on every four
+                # seconds would be a tug of war, so only the transition into
+                # playback is allowed to turn it on.
+                return
+            self._capture()
+            self.bulb.set_power(True, duration=FADE_MS)
 
         art_id = jf.get("art_id")
         if art_id and art_id != self.current_art:

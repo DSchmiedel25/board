@@ -23,7 +23,7 @@ LAT, LON = 42.8142, -73.9396          # Schenectady
 # DirtCheck publishes events.json (schedule) and status.json (flags, rain).
 # Note: renaming a repo breaks its GitHub Pages URL — git redirects, Pages
 # does not. If you rename again, this line has to change.
-DIRTCHECK_BASE = "https://dschmiedel25.github.io/dirtcheck/data"
+DIRTCHECK_BASE = "https://raw.githubusercontent.com/dschmiedel25/dirtcheck/main/data"
 BATHROOM_URL = "https://bathroomreport.app/analytics-data.json"
 
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public

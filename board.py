@@ -828,8 +828,8 @@ def screen_jellyfin(dirt, bath, wx, cal, phase=0):
 
 
 def screen_podium(dirt, bath, wx, cal, phase=0):
-    """Last Cup result as a podium. Only in rotation when there's a finished
-    race to show, so it disappears rather than going stale."""
+    """Top three from the Cup weekend — starting grid before the race,
+    finishing order after. Only in rotation when there's something to show."""
     pod = (wx.get("nascar") or {}).get("podium") or {}
     img, d = canvas()
 
@@ -843,15 +843,21 @@ def screen_podium(dirt, bath, wx, cal, phase=0):
              x0=x + SPRITE_W + 3, x1=62)
     d = ImageDraw.Draw(img)
 
+    # Gold, silver and bronze only on an actual finish. On a starting grid
+    # they would announce a win nobody has taken yet.
     MEDAL = [(255, 214, 92), (198, 206, 216), (198, 132, 72)]
+    grid = pod.get("kind") != "result"
     y = 22
-    for (pos, name), ink in zip(pod.get("top", []), MEDAL):
+    for i, (pos, name) in enumerate(pod.get("top", [])[:3]):
+        ink = RAIL if grid else MEDAL[i]
         d.rectangle([1, y, 8, y + 8], fill=ink)
-        draw_text(d, pos, 4, y + 2, (20, 16, 10), 1)
+        draw_text(d, pos, 4, y + 2, DUST if grid else (20, 16, 10), 1)
         draw_text(d, name[:11], 12, y + 2, DUST, 1)
         y += 13
 
-    draw_footer(img, "LAST RACE", phase)
+    # podium() now returns grids as well as results, so the footer has to
+    # say which one this is instead of always claiming "LAST RACE"
+    draw_footer(img, (pod.get("label") or "LAST RACE").upper(), phase)
     return img
 
 

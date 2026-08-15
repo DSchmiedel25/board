@@ -49,7 +49,10 @@ body{
   grid-template-columns:1.4fr 1fr;
   grid-template-areas:"flag flag" "tracks weather" "nascar media";
 }
-body.no-media #app{grid-template-areas:"flag flag" "tracks weather" "nascar nascar"}
+/* With nothing playing, the weather column grows downward rather than the
+   race rows stretching across the full width — three items spread over
+   1900px reads as a gap, not a list. */
+body.no-media #app{grid-template-areas:"flag flag" "tracks weather" "nascar weather"}
 body.no-media #media{display:none}
 .card{background:var(--panel);border-radius:var(--r);overflow:hidden;
       display:flex;flex-direction:column;min-height:0}

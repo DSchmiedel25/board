@@ -46,6 +46,22 @@ def short(name):
     return ABBREV.get(n, n)
 
 
+# ESPN's calendar publishes the END of each race slot, not the green flag.
+# Measured against races where both numbers are known:
+#
+#   Iowa          calendar 22:30Z   actual 19:30Z
+#   Daytona 500   calendar 21:30Z   actual 18:30Z
+#   Coca-Cola 600 calendar 01:00Z   actual 22:00Z
+#   Clash         calendar 02:00Z   actual 23:00Z
+#   Duel #1       calendar 03:00Z   actual 00:00Z
+#
+# Exactly three hours every time. events[0] carries the true start but only
+# for the most recent race, so future races have to come off the calendar
+# with the offset applied. If start times ever drift by three hours, this
+# constant is the first place to look.
+SLOT_HOURS = 3
+
+
 def url(slug):
     return f"{BASE}/{slug}/scoreboard"
 
@@ -80,7 +96,10 @@ def one(doc, label, fallback, now):
     nxt = None
     for c in cal:
         t = _iso(c.get("startDate"))
-        if t and t > now:
+        if not t:
+            continue
+        t -= dt.timedelta(hours=SLOT_HOURS)      # slot end -> green flag
+        if t > now:
             nxt = (c, t)
             break
 

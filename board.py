@@ -1072,7 +1072,7 @@ def fetch():
 
     if raw_n:
         import nascar as _nascar
-        wx["nascar"] = _nascar.build(raw_n)
+        wx["nascar"] = _nascar.build(raw_n, get=_get)
 
     snapshot(dirt, bath, wx)
 

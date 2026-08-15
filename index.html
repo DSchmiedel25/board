@@ -13,10 +13,10 @@
    flag colours as the only saturated things on screen, one fixed colour per
    track so you find yours before you read it. */
 :root{
-  --loam:#120e0b;  --panel:#1d1713;  --sunk:#251d18;  --rail:#3b2f26;
-  --dust:#f2e9dc;  --slate:#a1907f;  --sodium:#f7a72c;
-  --green:#34c86e; --red:#e24844;   --yellow:#e8c44a;
-  --as:#56c6ff;    --lv:#ff7a5c;    --fon:#a8e66e;
+  /* Taken from DirtCheck so the two never look like different products. */
+  --loam:#100f0d;  --panel:#1b1917;  --sunk:#232120;  --rail:#37342f;
+  --dust:#f0ebe0;  --slate:#8a8378;  --sodium:#e8b93f;
+  --green:#5fbf5a; --red:#d9534a;   --yellow:#e8b93f;
   --gap:clamp(10px,1.1vw,22px);
   --r:clamp(10px,1vw,18px);
 }
@@ -37,8 +37,9 @@ body{
   transition:filter 3s linear;
 }
 .mono{font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
-.eyebrow{font-size:.62em;letter-spacing:.22em;text-transform:uppercase;
-         color:var(--slate);font-weight:700}
+.eyebrow{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+         font-size:.6em;letter-spacing:.2em;text-transform:uppercase;
+         color:var(--slate);font-weight:400}
 
 /* ------------------------------------------------------------ structure */
 #app{
@@ -76,6 +77,7 @@ body.no-media #media{display:none}
 #flag.rained{background:var(--red);color:#2a0b0a}
 #flag.watch{background:var(--yellow);color:#2b2205}
 #flag.standby{background:var(--sunk);color:var(--sodium)}
+#flag.racing{color:#08210b}
 #flag.offline{background:var(--rail);color:var(--dust)}
 /* Two explicit flanks rather than a masked overlay — CSS mask sizing on a
    repeating conic-gradient proved unreliable, and this is easier to reason
@@ -104,20 +106,25 @@ body.no-media #media{display:none}
 .track .bar{width:6px;height:100%;border-radius:3px;background:var(--rail)}
 .track h3{font-size:clamp(19px,2.15vw,46px);font-weight:700;line-height:1;
           text-transform:uppercase;letter-spacing:.01em}
-.track .town{font-size:.72em;color:var(--slate);letter-spacing:.05em;
+.track .town{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+             font-size:.66em;color:var(--slate);letter-spacing:.14em;
              text-transform:uppercase}
 .track .when{font-size:clamp(16px,1.75vw,36px);font-weight:700;
              text-align:right;line-height:1.1}
-.track .rain{font-size:.72em;color:var(--slate);text-align:right}
-.track[data-code=AS] .bar{background:var(--as)}
-.track[data-code=AS] h3{color:var(--as)}
-.track[data-code=LV] .bar{background:var(--lv)}
-.track[data-code=LV] h3{color:var(--lv)}
-.track[data-code=FON] .bar{background:var(--fon)}
-.track[data-code=FON] h3{color:var(--fon)}
+.track .rain{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+             font-size:.66em;color:var(--slate);text-align:right;
+             letter-spacing:.08em}
+/* DirtCheck marks a track by its status, not its name — green means racing.
+   Borrowing that keeps one meaning for one colour across both screens. */
+.track .bar{background:var(--rail)}
+.track h3{color:var(--dust)}
+.track.live .bar{background:var(--green)}
 .track.dark h3{color:var(--slate)}
-.track.dark .bar{opacity:.35}
-.track.live .when{color:var(--green)}
+.track.dark .bar{opacity:.5}
+.track .status{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+  font-size:.68em;letter-spacing:.16em;color:var(--green);text-align:right}
+.track.dark .status{color:var(--slate)}
+.track.live .when{color:var(--dust)}
 .track.live{background:linear-gradient(90deg,rgba(247,167,44,.10),transparent 55%);
             animation:idle 3.6s ease-in-out infinite}
 @keyframes idle{0%,100%{box-shadow:inset 0 0 0 0 rgba(247,167,44,0)}
@@ -137,7 +144,8 @@ body.no-media #media{display:none}
 .days{display:grid;grid-template-columns:repeat(3,1fr);gap:.6em;margin-top:auto;
       border-top:1px solid rgba(255,255,255,.28);padding-top:.7em}
 .day{text-align:center}
-.day .n{font-size:.74em;color:#c3d4ec;letter-spacing:.1em}
+.day .n{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+        font-size:.68em;color:#c3d4ec;letter-spacing:.18em}
 .day .hi{font-size:clamp(19px,2.1vw,42px);font-weight:800;line-height:1.15}
 .day .lo{font-size:.86em;color:#b3c6e2}
 
@@ -149,7 +157,12 @@ body.no-media #media{display:none}
 .srow{display:flex;align-items:center;gap:.8em}
 .srow .name{font-size:clamp(15px,1.5vw,32px);font-weight:700;
             letter-spacing:.06em;text-transform:uppercase}
-.srow .time{margin-left:auto;font-size:clamp(14px,1.35vw,28px)}
+.srow .stack{margin-left:auto;text-align:right;display:flex;
+             flex-direction:column;line-height:1.15}
+.srow .date{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+            font-size:.62em;letter-spacing:.14em;color:var(--slate);
+            text-transform:uppercase}
+.srow .time{font-size:clamp(14px,1.35vw,28px);font-weight:700}
 .srow .net{background:var(--sunk);color:var(--sodium);font-weight:800;
            border-radius:.4em;padding:.22em .6em;font-size:.8em;min-width:3.6em;
            text-align:center}
@@ -214,6 +227,36 @@ body.no-media #media{display:none}
 #tracks{animation-delay:.10s} #weather{animation-delay:.16s}
 #nascar{animation-delay:.22s} #media{animation-delay:.28s}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}}
+
+/* Checked from a phone over Tailscale as often as it's read off the wall,
+   so below 900px it stacks into a single column and stops pretending to be
+   a 16:9 panel. */
+@media (max-width:900px), (orientation:portrait){
+  html,body{height:auto;overflow:auto}
+  #app{height:auto;min-height:100vh;grid-template-columns:1fr;
+       grid-template-rows:none;grid-auto-rows:min-content;
+       grid-template-areas:"flag" "tracks" "weather" "nascar" "media"}
+  /* the TV layout sizes cards by grid track; here they size to content */
+  .card{overflow:visible}
+  .card > header{border-radius:var(--r) var(--r) 0 0}
+  .body{flex:none}
+  .track{flex:none}
+  body.no-media #app{grid-template-areas:"flag" "tracks" "weather" "nascar"}
+  #flag{flex-direction:column;align-items:flex-start;gap:.2em}
+  #flag .sub{margin-left:0;text-align:left}
+  #flag .word{font-size:clamp(30px,8vw,58px)}
+  .track{padding:.9em 1em}
+  .track h3{font-size:clamp(19px,5vw,30px)}
+  #weather{min-height:0}
+  .wxmain{flex:none;padding-bottom:.6em}
+  .days{margin-top:.4em}
+  .wxtemp{font-size:clamp(64px,22vw,120px)}
+  #nascar .body{flex-direction:column}
+  .podium{border-left:0;border-top:1px solid var(--rail);
+          padding-left:0;padding-top:.8em}
+  #media .body{flex-direction:row}
+  #poster{height:auto;width:34%}
+}
 
 @media (prefers-reduced-motion:reduce){*{animation:none!important}
   #dust{display:none}}
@@ -344,7 +387,8 @@ function renderTracks(dirt){
       <div class="bar"></div>
       <div><h3>${name}</h3><div class="town">${town}</div></div>
       <div><div class="when">${r.when||"—"}</div>
-           <div class="rain">${r.prob==null?"":r.prob+"% rain"}</div></div>
+           <div class="status">${live?"GREEN":"DARK"}</div>
+           <div class="rain">${r.prob==null?"":r.prob+"% RAIN"}</div></div>
     </div>`;
   }).join("");
 }
@@ -389,7 +433,10 @@ function renderNascar(nc){
   const series = nc.rows.map(r=>`
     <div class="srow ${r.live?"live":""}">
       <span class="name">${LONG[r.label]||r.label}</span>
-      <span class="time mono">${r.when}</span>
+      <span class="stack">
+        <span class="date">${r.date||""}</span>
+        <span class="time mono">${r.live?"RACING":(r.time||r.when||"")}</span>
+      </span>
       <span class="net">${r.net||""}</span>
     </div>`).join("");
   const pod = nc.podium ? `<div class="podium">
@@ -452,7 +499,11 @@ function paintSky(){
   /* A clear sky with nothing in it is a void. Give it the thing that makes
      it clear — a low sun, or the moon after dark, breathing slightly. */
   if(sky==="clear"||sky==="night"){
-    const cxp=w*.78, cyp=h*.30, br=Math.min(w,h)*.17;
+    /* On a narrow card the top-right corner belongs to the wind and rain
+       figures, so the sun moves down out of their way. */
+    const tight = w < 520;
+    const cxp = w*(tight?.72:.78), cyp = h*(tight?.66:.30);
+    const br = Math.min(w,h)*(tight?.13:.17);
     const pulse=1+Math.sin(tick/90)*.02;
     const warm = sky==="clear";
     const halo=cx.createRadialGradient(cxp,cyp,0,cxp,cyp,br*3.2*pulse);

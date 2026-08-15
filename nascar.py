@@ -46,20 +46,37 @@ def short(name):
     return ABBREV.get(n, n)
 
 
-# ESPN's calendar publishes the END of each race slot, not the green flag.
-# Measured against races where both numbers are known:
-#
-#   Iowa          calendar 22:30Z   actual 19:30Z
-#   Daytona 500   calendar 21:30Z   actual 18:30Z
-#   Coca-Cola 600 calendar 01:00Z   actual 22:00Z
-#   Clash         calendar 02:00Z   actual 23:00Z
-#   Duel #1       calendar 03:00Z   actual 00:00Z
-#
-# Exactly three hours every time. events[0] carries the true start but only
-# for the most recent race, so future races have to come off the calendar
-# with the offset applied. If start times ever drift by three hours, this
-# constant is the first place to look.
+# ESPN's calendar publishes the end of each race slot, not the green flag.
+# Every Cup race checked was exactly three hours later than the true start,
+# but Cup runs ~3h while Xfinity is ~2h and Trucks under that — so a single
+# offset is only right for one series. Each calendar entry links to the real
+# event, which carries the actual start, and that is what gets used. The
+# offset below is a last resort for when that lookup fails.
 SLOT_HOURS = 3
+
+# The calendar's $ref points at an internal hostname. The public mirror
+# serves the same document.
+def _public(ref):
+    url = str(ref or "").replace("sports.core.api.espn.pvt",
+                                 "sports.core.api.espn.com").split("?")[0]
+    return url.replace("http://", "https://", 1)
+
+
+_START = {}                     # event url -> real start, cached for the run
+
+
+def true_start(entry, get):
+    """The green flag time from the event document, or None if unavailable."""
+    ref = _public(((entry or {}).get("event") or {}).get("$ref"))
+    if not ref or get is None:
+        return None
+    if ref in _START:
+        return _START[ref]
+    doc = get(ref, None, "nascar event")
+    when = _iso((doc or {}).get("date"))
+    if when:
+        _START[ref] = when
+    return when
 
 
 def url(slug):
@@ -90,15 +107,15 @@ def _is_live(doc):
     return ((ev.get("status") or {}).get("type") or {}).get("state") == "in"
 
 
-def one(doc, label, fallback, now):
+def one(doc, label, fallback, now, get=None):
     """A single series row: when its next race is, and where it's on."""
     cal = ((doc or {}).get("leagues") or [{}])[0].get("calendar") or []
     nxt = None
     for c in cal:
-        t = _iso(c.get("startDate"))
-        if not t:
+        slot = _iso(c.get("startDate"))
+        if not slot:
             continue
-        t -= dt.timedelta(hours=SLOT_HOURS)      # slot end -> green flag
+        t = true_start(c, get) or (slot - dt.timedelta(hours=SLOT_HOURS))
         if t > now:
             nxt = (c, t)
             break
@@ -121,7 +138,11 @@ def one(doc, label, fallback, now):
 
     return {
         "label": label,
+        # short form for the 64px board
         "when": f"{local.strftime('%a').upper()} {hour}:{local.minute:02d}",
+        # and the full picture for the wall page, which has room for it
+        "date": local.strftime("%a %b %-d"),
+        "time": f"{hour}:{local.minute:02d} {local.strftime('%p')}",
         "net": net,
         "live": False,
         "at": local,
@@ -157,7 +178,7 @@ def podium(doc):
     }
 
 
-def build(docs, now=None):
+def build(docs, now=None, get=None):
     """docs: {slug: parsed json}. Missing or broken slugs are skipped."""
     now = now or dt.datetime.now().astimezone()
     rows = []
@@ -165,7 +186,7 @@ def build(docs, now=None):
         doc = (docs or {}).get(slug)
         if doc:
             try:
-                rows.append(one(doc, label, fallback, now))
+                rows.append(one(doc, label, fallback, now, get))
             except Exception:
                 pass
 

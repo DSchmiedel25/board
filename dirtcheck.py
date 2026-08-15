@@ -66,7 +66,8 @@ def _title(raw, limit=16):
 def _state_from_status(st):
     """status.json's flag/official are free text and often null. Read them
     loosely rather than assuming a fixed vocabulary."""
-    for field in ("flag", "official"):
+    # official first: a track's own call beats DirtCheck's computed forecast
+    for field in ("official", "flag"):
         val = (st or {}).get(field)
         if not val:
             continue
@@ -129,7 +130,16 @@ def build(events_doc, status_doc, now=None):
                     "countdown": times.get("race", ""), "label": "SCHEDULED"}
 
         if target is None:
-            continue                        # night's over, fall through to next
+            # every gate time has passed, but it's still race day — the night
+            # is under way, not over. Falling through here made the board
+            # report standby while cars were on the track.
+            return {
+                "state": state,
+                "track": tk.get("short", code),
+                "town": _title(ev.get("title")),
+                "countdown": "ON",
+                "label": "UNDER WAY",
+            }
 
         return {
             "state": state,

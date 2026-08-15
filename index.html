@@ -472,7 +472,7 @@ function renderMedia(jf){
   const back = $("#backdrop");
   back.style.backgroundImage = src ? `url("${src}")` : "none";
   const art = src
-    ? `<img id="poster" src="${src}" alt=""
+    ? `<img id="poster" src="${src}" alt="" decoding="async"
             onerror="this.setAttribute('data-empty','');
                      document.getElementById('backdrop').style.backgroundImage='none'">`
     : "";

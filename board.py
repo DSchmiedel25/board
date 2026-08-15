@@ -992,7 +992,6 @@ def snapshot(dirt, bath, wx, path=None):
     two screens.
     """
     path = path or os.path.join(DATA_DIR, "state.json")
-    art = bath.get("art")
 
     doc = {
         "generated": dt.datetime.now().astimezone().isoformat(),
@@ -1006,10 +1005,19 @@ def snapshot(dirt, bath, wx, path=None):
 
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        if art is not None:
-            art.resize((320, 320), Image.LANCZOS).save(
-                os.path.join(os.path.dirname(path), "poster.jpg"), quality=88)
-            doc["jellyfin"]["poster"] = "data/poster.jpg"
+        # The wall page gets its own full-resolution poster at native
+        # aspect. Reusing the 64px panel art here meant a 1080p screen was
+        # showing a five-times upscale of a thumbnail.
+        if bath.get("playing") and bath.get("art_id") and JELLYFIN_KEY:
+            import jellyfin as _jf
+            full = _jf.poster_full(JELLYFIN_URL, JELLYFIN_KEY,
+                                   bath["art_id"], width=600)
+            if full is not None:
+                full.save(os.path.join(os.path.dirname(path), "poster.jpg"),
+                          quality=90)
+                doc["jellyfin"]["poster"] = "data/poster.jpg"
+                doc["jellyfin"]["art_w"] = full.width
+                doc["jellyfin"]["art_h"] = full.height
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
             # default=str so an un-serialisable value degrades to a string
@@ -1089,7 +1097,8 @@ def fetch_jellyfin():
     sess = jellyfin.sessions(JELLYFIN_URL, JELLYFIN_KEY)
     cnts = jellyfin.counts(JELLYFIN_URL, JELLYFIN_KEY)
     jf = jellyfin.build(sess, cnts, user=JELLYFIN_USER)
-    jf["art"] = (jellyfin.poster(JELLYFIN_URL, JELLYFIN_KEY, jf["art_id"])
+    jf["art"] = (jellyfin.poster(JELLYFIN_URL, JELLYFIN_KEY, jf["art_id"],
+                                 clear=SCRIM_TOP)
                  if jf.get("art_id") else None)
     return jf
 

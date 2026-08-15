@@ -969,6 +969,43 @@ def recall(name):
     return value, ("STALE" if time.time() - when > STALE_AFTER else "OK")
 
 
+def snapshot(dirt, bath, wx, path=None):
+    """Write what the board is showing to a JSON file the wall page reads.
+
+    The page deliberately does not call DirtCheck, Open-Meteo or ESPN itself.
+    Two clients interpreting the same feeds is how a Pixoo and a wall display
+    end up disagreeing about whether there's racing — and it would put the
+    Jellyfin key in a page served over the LAN. One fetch, one interpretation,
+    two screens.
+    """
+    path = path or os.path.join(DATA_DIR, "state.json")
+    art = bath.get("art")
+
+    doc = {
+        "generated": dt.datetime.now().astimezone().isoformat(),
+        "hour": dt.datetime.now().hour,
+        "dirt": {k: v for k, v in dirt.items() if k != "art"},
+        "weather": {k: v for k, v in wx.items() if k != "nascar"},
+        "nascar": wx.get("nascar") or {},
+        "jellyfin": {k: v for k, v in bath.items() if k != "art"},
+    }
+    doc["weather"]["sky"] = sky_name(wx.get("code", 0)) if "code" in wx else None
+
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if art is not None:
+            art.resize((320, 320), Image.LANCZOS).save(
+                os.path.join(os.path.dirname(path), "poster.jpg"), quality=88)
+            doc["jellyfin"]["poster"] = "data/poster.jpg"
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        os.replace(tmp, path)              # atomic, so the page never reads half
+    except OSError as e:
+        print(f"snapshot failed ({e})", file=sys.stderr)
+    return doc
+
+
 def fetch():
     """Adjust the two mappings below to match your real JSON.
     Nothing else in the file needs to change."""
@@ -1020,6 +1057,8 @@ def fetch():
     if raw_n:
         import nascar as _nascar
         wx["nascar"] = _nascar.build(raw_n)
+
+    snapshot(dirt, bath, wx)
 
     return dirt, bath, wx, {}
 

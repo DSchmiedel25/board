@@ -1,642 +1,517 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tower Board</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Board</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Saira:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;900&display=swap" rel="stylesheet">
 <style>
+/* ---------------------------------------------------------------- tokens
+   Same vocabulary as the Pixoo: warm dark ground, sodium for "next up",
+   flag colours as the only saturated things on screen, one fixed colour per
+   track so you find yours before you read it. */
 :root{
-  --loam:#1C1512; --clay:#251C18; --rail:#3A2C25;
-  --dust:#E8DCC8; --slate:#8B7A6C; --sodium:#F2A73B;
-  --flag-green:#3FA34D; --flag-red:#C4342B; --flag-yellow:#E5C34A;
-  --disp:"Saira Condensed",system-ui,sans-serif;
-  --body:"Saira",system-ui,sans-serif;
-  --mono:"JetBrains Mono",ui-monospace,monospace;
+  --loam:#120e0b;  --panel:#1d1713;  --sunk:#251d18;  --rail:#3b2f26;
+  --dust:#f2e9dc;  --slate:#a1907f;  --sodium:#f7a72c;
+  --green:#34c86e; --red:#e24844;   --yellow:#e8c44a;
+  --as:#56c6ff;    --lv:#ff7a5c;    --fon:#a8e66e;
+  --gap:clamp(10px,1.1vw,22px);
+  --r:clamp(10px,1vw,18px);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{font-size:1.45vh}
+
+/* The sodium wash of track lights, bleeding down from above the board. */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+  background:radial-gradient(120% 55% at 50% -12%,
+    rgba(247,167,44,.16), rgba(247,167,44,.05) 45%, transparent 70%)}
+/* Dust hanging in the air between you and the panel. */
+#dust{position:fixed;inset:0;pointer-events:none;z-index:60;opacity:.75}
+html,body{height:100%;overflow:hidden;background:var(--loam);color:var(--dust)}
 body{
-  background:var(--loam);color:var(--dust);font-family:var(--body);
-  height:100vh;overflow:hidden;
-  background-image:radial-gradient(120% 80% at 50% -10%, rgba(242,167,59,.09), transparent 60%);
+  font-family:"Barlow Condensed","Liberation Sans Narrow","Arial Narrow",
+              Helvetica,Arial,sans-serif;
+  font-size:clamp(14px,1.05vw,22px);
+  -webkit-font-smoothing:antialiased;
+  transition:filter 3s linear;
 }
-.board{height:100vh;display:grid;grid-template-rows:auto 1fr auto;gap:.9rem;padding:1.1rem 1.3rem}
+.mono{font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
+.eyebrow{font-size:.62em;letter-spacing:.22em;text-transform:uppercase;
+         color:var(--slate);font-weight:700}
 
-/* masthead */
-.masthead{display:flex;align-items:flex-end;gap:1.6rem;border-bottom:2px solid var(--rail);padding-bottom:.7rem}
-.mast-clock{font-family:var(--mono);font-size:4.6rem;font-weight:700;line-height:.85;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.mast-clock .mer{font-size:1.5rem;color:var(--slate);margin-left:.4rem;letter-spacing:0}
-.mast-when{padding-bottom:.35rem}
-.mast-day{font-family:var(--disp);font-size:2.5rem;font-weight:700;line-height:.9;letter-spacing:.02em;color:var(--sodium)}
-.mast-date{font-family:var(--mono);font-size:1rem;color:var(--slate);letter-spacing:.18em;margin-top:.25rem}
-.mast-fill{flex:1}
-.mast-now{display:flex;align-items:flex-end;gap:1.4rem;padding-bottom:.35rem}
-.now-temp{font-family:var(--disp);font-size:3.8rem;font-weight:700;line-height:.85}
-.now-temp sup{font-size:1.4rem;vertical-align:super;color:var(--slate)}
-.now-meta{text-align:right;line-height:1.5}
-.now-cond{font-family:var(--disp);font-size:1.5rem;font-weight:600;letter-spacing:.03em}
-.now-sub{font-family:var(--mono);font-size:.85rem;color:var(--slate);letter-spacing:.08em}
-
-/* grid */
-.grid{display:grid;grid-template-columns:1.45fr 1fr 1fr;grid-template-rows:1.25fr 1fr;gap:.9rem;min-height:0}
-.hero{grid-row:span 2}
-.panel{background:var(--clay);border:1px solid var(--rail);display:flex;flex-direction:column;min-height:0;overflow:hidden}
-.panel-head{display:flex;justify-content:space-between;align-items:baseline;padding:.7rem .95rem .55rem;border-bottom:1px solid var(--rail);flex-shrink:0}
-.panel-label{font-family:var(--mono);font-size:.8rem;font-weight:700;letter-spacing:.22em;color:var(--slate)}
-.panel-note{font-family:var(--mono);font-size:.78rem;color:var(--rail);letter-spacing:.1em}
-.panel-body{padding:.85rem .95rem;flex:1;min-height:0;display:flex;flex-direction:column}
-
-/* the flag bar */
-.flag{height:2.6rem;flex-shrink:0;display:flex;align-items:center;padding:0 .95rem;font-family:var(--disp);font-size:1.5rem;font-weight:700;letter-spacing:.16em;color:var(--loam);position:relative}
-.flag::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.22),transparent 55%);pointer-events:none}
-.flag--green{background:var(--flag-green)}
-.flag--red{background:var(--flag-red);color:#F6EDE4}
-.flag--yellow{background:var(--flag-yellow)}
-.flag--standby{background:transparent;color:var(--slate);border-bottom:1px solid var(--rail);font-size:1.15rem}
-.flag--standby::after{display:none}
-.flag-right{margin-left:auto;font-family:var(--mono);font-size:.85rem;letter-spacing:.12em;opacity:.85}
-
-/* hero */
-.hero-body{padding:1.1rem .95rem .95rem;flex:1;display:flex;flex-direction:column;min-height:0}
-.hero-eyebrow{font-family:var(--mono);font-size:.82rem;letter-spacing:.22em;color:var(--slate)}
-.hero-title{font-family:var(--disp);font-size:4.1rem;font-weight:700;line-height:.92;margin-top:.2rem}
-.hero-sub{font-size:1.15rem;color:var(--slate);margin-top:.35rem;line-height:1.4}
-.hero-big{font-family:var(--disp);font-size:7.4rem;font-weight:700;line-height:.82;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin-top:.3rem}
-.hero-big small{font-size:1.9rem;color:var(--slate);letter-spacing:.02em;margin-left:.5rem}
-
-/* sessions chart */
-.chart{display:flex;gap:.5rem;align-items:flex-end;flex:1;min-height:0;margin-top:1rem;padding-bottom:.3rem}
-.chart-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:.35rem;height:100%}
-.chart-bar{width:100%;background:var(--rail);position:relative;min-height:2px}
-.chart-bar i{position:absolute;left:0;right:0;bottom:0;background:var(--sodium);display:block}
-.chart-col:last-child .chart-bar i{background:var(--dust)}
-.chart-v{font-family:var(--mono);font-size:.8rem;font-variant-numeric:tabular-nums}
-.chart-d{font-family:var(--mono);font-size:.7rem;color:var(--slate)}
-
-/* lineup */
-.lineup{margin-top:auto;border-top:1px solid var(--rail)}
-.lineup-row{display:grid;grid-template-columns:.5rem 1fr auto auto;align-items:center;gap:.85rem;padding:.65rem 0;border-bottom:1px solid rgba(58,44,37,.6)}
-.lineup-row:last-child{border-bottom:0}
-.dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--rail)}
-.dot--green{background:var(--flag-green)}
-.dot--red{background:var(--flag-red)}
-.dot--yellow{background:var(--flag-yellow)}
-.lineup-name{font-family:var(--disp);font-size:1.5rem;font-weight:600}
-.lineup-name span{display:block;font-family:var(--mono);font-size:.72rem;color:var(--slate);letter-spacing:.14em;font-weight:400}
-.lineup-time{font-family:var(--mono);font-size:1.05rem;font-variant-numeric:tabular-nums}
-.lineup-state{font-family:var(--mono);font-size:.75rem;letter-spacing:.14em;padding:.2rem .5rem;border:1px solid var(--rail);color:var(--slate);min-width:6.5rem;text-align:center}
-.lineup-state.is-go{color:var(--flag-green);border-color:var(--flag-green)}
-.lineup-state.is-out{color:var(--flag-red);border-color:var(--flag-red)}
-.lineup-state.is-watch{color:var(--flag-yellow);border-color:var(--flag-yellow)}
-
-.hero-stats{margin-top:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:.9rem;border-top:1px solid var(--rail);padding-top:.85rem}
-.stat-k{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;color:var(--slate)}
-.stat-v{font-family:var(--disp);font-size:2.5rem;font-weight:700;line-height:1;margin-top:.15rem;font-variant-numeric:tabular-nums}
-.stat-v em{font-style:normal;font-size:1rem;color:var(--slate);margin-left:.25rem}
-
-/* calendar */
-.cal-list{display:flex;flex-direction:column;gap:.55rem;overflow:hidden}
-.cal-item{display:grid;grid-template-columns:4.2rem 1fr;gap:.75rem;align-items:baseline}
-.cal-time{font-family:var(--mono);font-size:.88rem;color:var(--sodium);font-variant-numeric:tabular-nums}
-.cal-time.is-allday{color:var(--slate)}
-.cal-title{font-size:1.05rem;line-height:1.25}
-.cal-where{display:block;font-family:var(--mono);font-size:.75rem;color:var(--slate);letter-spacing:.06em;margin-top:.1rem}
-.cal-rule{border-top:1px dashed var(--rail);margin:.35rem 0 .1rem;padding-top:.5rem}
-.cal-rule-label{font-family:var(--mono);font-size:.72rem;letter-spacing:.2em;color:var(--rail)}
-.empty{font-family:var(--mono);font-size:.85rem;color:var(--rail);letter-spacing:.12em;margin:auto;text-align:center}
-
-/* weather */
-.wx-strip{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--rail);flex-shrink:0}
-.wx-cell{padding:.55rem .5rem;border-right:1px solid var(--rail);text-align:center}
-.wx-cell:last-child{border-right:0}
-.wx-k{font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;color:var(--slate)}
-.wx-v{font-family:var(--disp);font-size:1.75rem;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums}
-.wx-hours{display:flex;gap:.4rem;margin-top:.75rem;align-items:flex-end;flex:1;min-height:0}
-.wx-hour{flex:1;display:flex;flex-direction:column;align-items:center;gap:.3rem;justify-content:flex-end;height:100%}
-.wx-bar{width:100%;background:var(--rail);position:relative}
-.wx-bar i{position:absolute;left:0;right:0;bottom:0;background:var(--sodium);display:block}
-.wx-hr{font-family:var(--mono);font-size:.68rem;color:var(--slate)}
-.wx-deg{font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
-.wx-quip{font-size:.95rem;color:var(--slate);border-top:1px solid var(--rail);padding-top:.6rem;margin-top:.7rem;line-height:1.35}
-
-/* news */
-.news-list{display:flex;flex-direction:column;gap:.7rem;overflow:hidden}
-.news-item{display:grid;grid-template-columns:auto 1fr;gap:.7rem;align-items:baseline}
-.news-src{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;color:var(--loam);background:var(--slate);padding:.12rem .38rem;white-space:nowrap}
-.news-head{font-size:1rem;line-height:1.3}
-.news-age{font-family:var(--mono);font-size:.72rem;color:var(--rail);margin-left:.4rem}
-
-/* projects */
-.proj-grid{display:grid;grid-template-columns:1fr 1fr;gap:.85rem;flex:1;align-content:center}
-.proj-k{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;color:var(--slate)}
-.proj-v{font-family:var(--disp);font-size:2.3rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
-.proj-v em{font-style:normal;font-size:.95rem;color:var(--sodium);margin-left:.3rem}
-
-/* ticker */
-.ticker{border-top:2px solid var(--rail);padding-top:.55rem;display:flex;align-items:center;gap:.9rem;overflow:hidden}
-.ticker-tag{font-family:var(--mono);font-size:.72rem;font-weight:700;letter-spacing:.2em;color:var(--loam);background:var(--sodium);padding:.2rem .5rem;flex-shrink:0}
-.ticker-tag.is-bad{background:var(--flag-red);color:#F6EDE4}
-.ticker-track{flex:1;overflow:hidden;white-space:nowrap;min-width:0}
-.ticker-run{display:inline-block;animation:run 46s linear infinite;padding-left:100%}
-.ticker-run span{font-family:var(--mono);font-size:.82rem;letter-spacing:.09em;color:var(--slate)}
-.ticker-run span::before{content:"\25C6";color:var(--rail);margin:0 1.4rem}
-@keyframes run{from{transform:translateX(0)}to{transform:translateX(-100%)}}
-@media (prefers-reduced-motion:reduce){.ticker-run{animation:none;padding-left:0}}
-
-@media (max-aspect-ratio:1/1){
-  html{font-size:15px}
-  body{overflow:auto;height:auto}
-  .board{height:auto;grid-template-rows:none}
-  .grid{grid-template-columns:1fr;grid-template-rows:none}
-  .hero{grid-row:auto}
-  .hero-big{font-size:5rem}.hero-title{font-size:2.6rem}.mast-clock{font-size:3rem}
+/* ------------------------------------------------------------ structure */
+#app{
+  position:relative;z-index:2;
+  height:100%;padding:var(--gap);display:grid;gap:var(--gap);
+  grid-template-rows:auto 1.35fr 1fr;
+  grid-template-columns:1.4fr 1fr;
+  grid-template-areas:"flag flag" "tracks weather" "nascar media";
 }
+body.no-media #app{grid-template-areas:"flag flag" "tracks weather" "nascar nascar"}
+body.no-media #media{display:none}
+.card{background:var(--panel);border-radius:var(--r);overflow:hidden;
+      display:flex;flex-direction:column;min-height:0}
+.card > header{padding:.7em 1.1em;display:flex;align-items:baseline;gap:1em;
+               background:var(--sunk)}
+.card > header h2{font-size:1.7em;letter-spacing:.06em;font-weight:900;
+                  text-transform:uppercase}
+.card > header .right{margin-left:auto}
+.body{padding:var(--gap);display:flex;flex-direction:column;
+      gap:calc(var(--gap)*.7);flex:1;min-height:0}
+
+/* ---------------------------------------------------------- signature
+   The flag strip is the whole point: one field, full width, that answers
+   "is racing happening" from the doorway. Everything else is subordinate.
+   On a green night it moves. */
+#flag{grid-area:flag;border-radius:var(--r);position:relative;overflow:hidden;
+      display:flex;align-items:center;gap:1.2em;
+      padding:clamp(.5em,1.4vh,1em) 1.2em;background:var(--sunk)}
+#flag .word{font-size:clamp(30px,5.6vw,96px);font-weight:900;line-height:.92;
+            letter-spacing:.02em;text-transform:uppercase;position:relative}
+#flag .sub{font-size:clamp(13px,1.55vw,32px);font-weight:700;opacity:.8;
+           margin-left:auto;text-align:right;line-height:1.2;color:inherit;
+           text-transform:uppercase;letter-spacing:.14em}
+#flag.racing{background:var(--green);color:#08240f}
+#flag.rained{background:var(--red);color:#2a0b0a}
+#flag.watch{background:var(--yellow);color:#2b2205}
+#flag.standby{background:var(--sunk);color:var(--sodium)}
+#flag.offline{background:var(--rail);color:var(--dust)}
+/* Two explicit flanks rather than a masked overlay — CSS mask sizing on a
+   repeating conic-gradient proved unreliable, and this is easier to reason
+   about anyway. */
+#flag .checks{position:absolute;top:0;bottom:0;width:clamp(60px,9%,150px);
+  opacity:0;pointer-events:none;
+  background:conic-gradient(#fff 25%,#0000 0 50%,#fff 0 75%,#0000 0) 0 0/24px 24px;
+  mix-blend-mode:soft-light}
+#flag .checks.l{left:0}
+#flag .checks.r{right:0}
+#flag.racing .checks{opacity:.55;animation:march 2.2s linear infinite}
+#flag .sheen{position:absolute;inset:0;pointer-events:none;opacity:0;
+  background:linear-gradient(105deg,transparent 38%,rgba(255,255,255,.32) 50%,
+             transparent 62%);transform:translateX(-100%)}
+#flag.racing .sheen,#flag.rained .sheen,#flag.watch .sheen{
+  opacity:1;animation:sweep 5.5s ease-in-out infinite}
+@keyframes sweep{0%{transform:translateX(-100%)}
+                 55%,100%{transform:translateX(100%)}}
+@keyframes march{to{background-position:48px 0}}
+
+/* ------------------------------------------------------------- tracks */
+#tracks{grid-area:tracks}
+.track{display:grid;grid-template-columns:6px 1fr auto;gap:0 1em;
+       align-items:center;background:var(--sunk);border-radius:calc(var(--r)*.7);
+       padding:.75em 1em;flex:1;min-height:0}
+.track .bar{width:6px;height:100%;border-radius:3px;background:var(--rail)}
+.track h3{font-size:clamp(19px,2.15vw,46px);font-weight:700;line-height:1;
+          text-transform:uppercase;letter-spacing:.01em}
+.track .town{font-size:.72em;color:var(--slate);letter-spacing:.05em;
+             text-transform:uppercase}
+.track .when{font-size:clamp(16px,1.75vw,36px);font-weight:700;
+             text-align:right;line-height:1.1}
+.track .rain{font-size:.72em;color:var(--slate);text-align:right}
+.track[data-code=AS] .bar{background:var(--as)}
+.track[data-code=AS] h3{color:var(--as)}
+.track[data-code=LV] .bar{background:var(--lv)}
+.track[data-code=LV] h3{color:var(--lv)}
+.track[data-code=FON] .bar{background:var(--fon)}
+.track[data-code=FON] h3{color:var(--fon)}
+.track.dark h3{color:var(--slate)}
+.track.dark .bar{opacity:.35}
+.track.live .when{color:var(--green)}
+.track.live{background:linear-gradient(90deg,rgba(247,167,44,.10),transparent 55%);
+            animation:idle 3.6s ease-in-out infinite}
+@keyframes idle{0%,100%{box-shadow:inset 0 0 0 0 rgba(247,167,44,0)}
+                50%{box-shadow:inset 0 0 44px -14px rgba(247,167,44,.55)}}
+
+/* ------------------------------------------------------------ weather */
+#weather{grid-area:weather;position:relative;background:#1d3a63}
+#weather .body{position:relative;z-index:2}
+#sky{position:absolute;inset:0;z-index:0;width:100%;height:100%}
+#weather header{background:rgba(0,0,0,.28);position:relative;z-index:2}
+.wxmain{display:flex;align-items:center;gap:.4em;flex:1}
+.wxtemp{font-size:clamp(58px,9vw,168px);font-weight:900;line-height:.8;
+        letter-spacing:-.02em}
+.tempwrap{display:flex;align-items:baseline;gap:.08em}
+.wxdeg{font-size:clamp(20px,2.4vw,44px);font-weight:700;opacity:.7}
+.wxsub{margin-left:auto;text-align:right;font-size:.86em;line-height:1.7;color:#dbe6f7}
+.days{display:grid;grid-template-columns:repeat(3,1fr);gap:.6em;margin-top:auto;
+      border-top:1px solid rgba(255,255,255,.28);padding-top:.7em}
+.day{text-align:center}
+.day .n{font-size:.74em;color:#c3d4ec;letter-spacing:.1em}
+.day .hi{font-size:clamp(19px,2.1vw,42px);font-weight:800;line-height:1.15}
+.day .lo{font-size:.86em;color:#b3c6e2}
+
+/* ------------------------------------------------------------- nascar */
+#nascar{grid-area:nascar}
+#nascar .body{flex-direction:row;gap:var(--gap)}
+.series{flex:1.35;display:flex;flex-direction:column;gap:.5em;min-width:0;
+        justify-content:space-around}
+.srow{display:flex;align-items:center;gap:.8em}
+.srow .name{font-size:clamp(15px,1.5vw,32px);font-weight:700;
+            letter-spacing:.06em;text-transform:uppercase}
+.srow .time{margin-left:auto;font-size:clamp(14px,1.35vw,28px)}
+.srow .net{background:var(--sunk);color:var(--sodium);font-weight:800;
+           border-radius:.4em;padding:.22em .6em;font-size:.8em;min-width:3.6em;
+           text-align:center}
+.srow.live .time{color:var(--green);font-weight:800}
+.podium{flex:1;border-left:1px solid var(--rail);padding-left:var(--gap);
+        display:flex;flex-direction:column;gap:.4em;min-width:0}
+.pod{display:flex;align-items:center;gap:.7em}
+.pod .pos{width:1.7em;height:1.7em;border-radius:.35em;flex:none;display:grid;
+          place-items:center;font-weight:900;color:#1a1509;font-size:.8em}
+.pod:nth-child(2) .pos{background:#ffd65c}
+.pod:nth-child(3) .pos{background:#c6ced8}
+.pod:nth-child(4) .pos{background:#c68448}
+.pod .who{font-size:clamp(14px,1.3vw,28px);font-weight:700;white-space:nowrap;
+          text-transform:uppercase;letter-spacing:.03em;
+          overflow:hidden;text-overflow:ellipsis}
+
+/* -------------------------------------------------------------- media */
+#media{grid-area:media;position:relative;overflow:hidden}
+
+/* The panel takes the colour of whatever is on — the same trick the LIFX
+   bulb plays, so the room and the board agree. Heavy blur keeps it as light
+   rather than a picture competing with the one beside it. */
+#media .backdrop{position:absolute;inset:0;z-index:0;
+  background-size:cover;background-position:center;
+  filter:blur(52px) saturate(2.1) brightness(1.15);
+  transform:scale(1.4);opacity:.85;
+  transition:background-image .6s ease}
+#media .scrim{position:absolute;inset:0;z-index:1;
+  background:linear-gradient(100deg,rgba(18,14,11,.18) 0 18%,
+             rgba(18,14,11,.62) 52%,rgba(18,14,11,.86) 100%)}
+#media > header,#media .body{position:relative;z-index:2}
+#media > header{background:rgba(18,14,11,.42);backdrop-filter:blur(8px)}
+#media .body{flex-direction:row;gap:calc(var(--gap)*1.2)}
+#poster{height:100%;aspect-ratio:2/3;border-radius:calc(var(--r)*.6);
+        object-fit:cover;background:var(--sunk);flex:none;
+        box-shadow:0 12px 30px -8px rgba(0,0,0,.75),
+                   0 0 0 1px rgba(255,255,255,.09);
+        animation:poster .7s cubic-bezier(.2,.7,.3,1) both}
+@keyframes poster{from{opacity:0;transform:translateY(10px) scale(.97)}}
+#poster[data-empty]{display:none}
+.meta{display:flex;flex-direction:column;gap:.4em;min-width:0;flex:1;
+      padding:.2em 0}
+.meta .title{font-size:clamp(21px,2.2vw,46px);font-weight:700;line-height:1.05;
+             text-transform:uppercase;letter-spacing:.01em;
+             overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;
+             -webkit-box-orient:vertical}
+.meta .ep{color:#cbb9a6;font-size:.95em;letter-spacing:.02em}
+.meta .who{color:var(--sodium);font-weight:700;letter-spacing:.06em}
+.prog{height:.5em;border-radius:.25em;background:var(--rail);margin-top:auto}
+.prog i{display:block;height:100%;border-radius:.25em;background:var(--sodium)}
+.left{font-size:.8em;color:var(--slate);margin-top:.5em}
+
+/* --------------------------------------------------------- unavailable
+   A dead source says so. It never borrows the look of live data. */
+.down{flex:1;display:grid;place-items:center;text-align:center;color:var(--slate)}
+.down b{display:block;font-size:clamp(18px,2vw,40px);color:var(--dust);
+        letter-spacing:.1em;margin-bottom:.25em}
+.pill{font-size:.68em;font-weight:800;letter-spacing:.14em;color:#1a1509;
+      background:var(--sodium);border-radius:.4em;padding:.2em .55em}
+.card,#flag{animation:rise .6s cubic-bezier(.2,.7,.3,1) both}
+#flag{animation-delay:.02s}
+#tracks{animation-delay:.10s} #weather{animation-delay:.16s}
+#nascar{animation-delay:.22s} #media{animation-delay:.28s}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important}
+  #dust{display:none}}
 </style>
 </head>
-<body>
-<div class="board">
-  <header class="masthead">
-    <div class="mast-when">
-      <div class="mast-day" id="day">&mdash;</div>
-      <div class="mast-date" id="date">&mdash;</div>
-    </div>
-    <div class="mast-clock" id="clock">&mdash;</div>
-    <div class="mast-fill"></div>
-    <div class="mast-now">
-      <div class="now-temp" id="nowTemp">&mdash;</div>
-      <div class="now-meta">
-        <div class="now-cond" id="nowCond">&nbsp;</div>
-        <div class="now-sub" id="nowSub">SCHENECTADY</div>
-      </div>
-    </div>
-  </header>
+<body class="no-media">
+<canvas id="dust"></canvas>
+<div id="app">
+  <div id="flag" class="standby">
+    <div class="checks l"></div><div class="checks r"></div>
+    <div class="sheen"></div>
+    <div class="word" id="flagWord">Connecting</div>
+    <div class="sub" id="flagSub"></div>
+  </div>
 
-  <main class="grid">
-    <section class="panel hero">
-      <div class="flag flag--standby" id="flag">LOADING</div>
-      <div class="hero-body" id="heroBody"></div>
-    </section>
+  <section class="card" id="tracks">
+    <header><h2>Tracks</h2><span class="eyebrow right" id="tracksAge"></span></header>
+    <div class="body" id="trackBody"></div>
+  </section>
 
-    <section class="panel">
-      <div class="panel-head"><span class="panel-label">ON THE BOOKS</span><span class="panel-note">CALENDAR</span></div>
-      <div class="panel-body"><div class="cal-list" id="calList"><p class="empty">LOADING</p></div></div>
-    </section>
+  <section class="card" id="weather">
+    <canvas id="sky"></canvas>
+    <header><h2 id="wxWord">Weather</h2><span class="eyebrow right">Schenectady</span></header>
+    <div class="body" id="wxBody"></div>
+  </section>
 
-    <section class="panel">
-      <div class="panel-head"><span class="panel-label">SKY</span><span class="panel-note">OPEN-METEO</span></div>
-      <div class="panel-body" id="wxBody"><p class="empty">LOADING</p></div>
-    </section>
+  <section class="card" id="nascar">
+    <header><h2 id="ncVenue">NASCAR</h2><span class="eyebrow right">Next race</span></header>
+    <div class="body" id="ncBody"></div>
+  </section>
 
-    <section class="panel">
-      <div class="panel-head"><span class="panel-label" id="projLabel">&nbsp;</span><span class="panel-note" id="projNote">&nbsp;</span></div>
-      <div class="panel-body"><div class="proj-grid" id="projGrid"></div></div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><span class="panel-label">WIRE</span><span class="panel-note">RSS</span></div>
-      <div class="panel-body"><div class="news-list" id="newsList"><p class="empty">LOADING</p></div></div>
-    </section>
-  </main>
-
-  <footer class="ticker">
-    <span class="ticker-tag" id="tickerTag">SYSTEMS</span>
-    <div class="ticker-track"><div class="ticker-run" id="tickerRun"></div></div>
-  </footer>
+  <section class="card" id="media">
+    <div class="backdrop" id="backdrop"></div>
+    <div class="scrim"></div>
+    <header><h2>Now playing</h2></header>
+    <div class="body" id="mediaBody"></div>
+  </section>
 </div>
 
 <script>
-/* =====================================================================
-   Sources. Weather, DirtCheck and BathroomReport all send CORS headers, so
-   the page fetches them straight from the browser. News and calendar can't
-   be, so cron drops them in /data/ and we read them off localhost.
-   ===================================================================== */
-const LAT = 42.8142, LON = -73.9396;
-const WEATHER = "https://api.open-meteo.com/v1/forecast?latitude=" + LAT + "&longitude=" + LON
-  + "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m"
-  + "&hourly=temperature_2m,precipitation_probability"
-  + "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
-  + "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=2";
-const DIRT = "https://dschmiedel25.github.io/dirtcheck/data";
-const BATH = "https://bathroomreport.app/analytics-data.json";
-const NEWS = ["/data/news1.xml", "/data/news2.xml"];
-const CAL  = "/data/next.json";
+const $ = s => document.querySelector(s);
 
-const REFRESH_MS = 5 * 60 * 1000;
-const $ = function (id) { return document.getElementById(id); };
-const esc = function (s) {
-  return String(s == null ? "" : s).replace(/[&<>]/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c];
-  });
-};
-const num = function (n) { return Number(n || 0).toLocaleString(); };
-
-async function grab(url, type) {
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(r.status + " " + url);
-  return type === "text" ? r.text() : r.json();
-}
-
-/* ---------------------------------------------------- weather ---- */
-function wmo(c) {
-  if (c === 0) return "Clear";
-  if (c <= 2) return "Partly cloudy";
-  if (c === 3) return "Cloudy";
-  if (c <= 48) return "Fog";
-  if (c <= 57) return "Drizzle";
-  if (c <= 67) return "Rain";
-  if (c <= 77) return "Snow";
-  if (c <= 82) return "Showers";
-  if (c <= 86) return "Snow";
-  return "Storms";
-}
-
-function quip(cur, dayMax, hours) {
-  const wet = hours.filter(function (h) { return h.p >= 50; });
-  if (cur.weather_code >= 95) return "Storms in the area. Anything outdoors is a gamble.";
-  if (cur.weather_code >= 51) return "Raining now. The tracks won't like it either.";
-  if (wet.length) return "Dry for now, but " + wet[0].label + " is showing " + wet[0].p + "% \u2014 worth watching.";
-  if (dayMax >= 40) return "Rain chance climbing later. Keep an eye on it.";
-  if (cur.temperature_2m >= 88) return "Hot one. Drink more water than you think you need.";
-  return "Clear sailing. Nothing in the way today.";
-}
-
-function renderWeather(w) {
-  const cur = w.current;
-  const high = Math.round(w.daily.temperature_2m_max[0]);
-  const rain = w.daily.precipitation_probability_max[0] || 0;
-
-  $("nowTemp").innerHTML = Math.round(cur.temperature_2m) + "<sup>&deg;</sup>";
-  $("nowCond").textContent = wmo(cur.weather_code);
-  $("nowSub").textContent = "SCHENECTADY \u00B7 FEELS " + Math.round(cur.apparent_temperature) + "\u00B0";
-
-  // eight slots at two-hour spacing, starting from the current hour
-  const now = new Date();
-  let idx = w.hourly.time.findIndex(function (t) { return new Date(t) >= now; });
-  if (idx < 0) idx = 0;
-  const hours = [];
-  for (let i = idx; i < w.hourly.time.length && hours.length < 8; i += 2) {
-    const d = new Date(w.hourly.time[i]);
-    const h = d.getHours();
-    hours.push({
-      label: (h % 12 || 12) + (h < 12 ? "A" : "P"),
-      t: Math.round(w.hourly.temperature_2m[i]),
-      p: w.hourly.precipitation_probability[i] || 0
+/* Dust hanging under the lights. Slow, sparse and warm — it should read as
+   atmosphere you notice on the second look, not as falling snow. */
+(function dustField(){
+  const c=$("#dust"), x=c.getContext("2d");
+  let bits=[];
+  function seed(){
+    c.width=innerWidth; c.height=innerHeight;
+    bits=Array.from({length:Math.round(innerWidth*innerHeight/26000)},()=>({
+      x:Math.random()*c.width, y:Math.random()*c.height,
+      r:Math.random()*1.7+.5, vx:.06+Math.random()*.22,
+      a:.06+Math.random()*.22, p:Math.random()*7,
+    }));
+  }
+  function paint(){
+    x.clearRect(0,0,c.width,c.height);
+    bits.forEach(b=>{
+      b.x+=b.vx; b.p+=.006;
+      if(b.x>c.width+4){b.x=-4; b.y=Math.random()*c.height;}
+      const y=b.y+Math.sin(b.p)*7;
+      x.fillStyle=`rgba(247,206,150,${b.a})`;
+      x.beginPath(); x.arc(b.x,y,b.r,0,7); x.fill();
     });
+    requestAnimationFrame(paint);
   }
-  const temps = hours.map(function (h) { return h.t; });
-  const lo = Math.min.apply(null, temps) - 4, hi = Math.max.apply(null, temps) + 2;
+  seed(); paint(); addEventListener("resize",seed);
+})();
 
-  $("wxBody").innerHTML =
-    '<div class="wx-strip">'
-    + '<div class="wx-cell"><div class="wx-k">HIGH</div><div class="wx-v">' + high + "&deg;</div></div>"
-    + '<div class="wx-cell"><div class="wx-k">RAIN</div><div class="wx-v">' + rain + "%</div></div>"
-    + '<div class="wx-cell"><div class="wx-k">WIND</div><div class="wx-v">' + Math.round(cur.wind_speed_10m) + "</div></div>"
-    + '<div class="wx-cell"><div class="wx-k">HUM</div><div class="wx-v">' + Math.round(cur.relative_humidity_2m) + "%</div></div>"
-    + "</div>"
-    + '<div class="wx-hours">'
-    + hours.map(function (h) {
-        const pct = Math.round((h.t - lo) / (hi - lo) * 100);
-        return '<div class="wx-hour"><div class="wx-deg">' + h.t + "&deg;</div>"
-          + '<div class="wx-bar" style="height:100%"><i style="height:' + pct + '%"></i></div>'
-          + '<div class="wx-hr">' + h.label + "</div></div>";
-      }).join("")
-    + "</div>"
-    + '<p class="wx-quip">' + esc(quip(cur, rain, hours)) + "</p>";
+/* Values roll to their new figure like a scoreboard wheel instead of
+   blinking. Only worth doing where the number is big enough to watch. */
+function roll(el, to, ms=700){
+  const from = parseFloat(el.dataset.v);
+  el.dataset.v = to;
+  if (!isFinite(from) || from === to){ el.textContent = to; return; }
+  const t0 = performance.now();
+  (function step(now){
+    const k = Math.min(1,(now-t0)/ms), e = 1-Math.pow(1-k,3);
+    el.textContent = Math.round(from + (to-from)*e);
+    if (k < 1) requestAnimationFrame(step);
+  })(t0);
+}
+const POLL = 15000;
+
+/* Night dimming. A wall panel at full brightness at 2am is miserable, so the
+   page follows the same schedule the Pixoo uses. */
+function dim(hour){
+  const night = hour >= 22 || hour < 6;
+  document.body.style.filter = night ? "brightness(.42) saturate(.9)" : "brightness(1)";
 }
 
-/* ---------------------------------------------------- dirtcheck ---- */
-const OFF_WORDS = ["rain", "postpone", "cancel", "off"];
-const ON_WORDS = ["green", "go", "racing", "run"];
+const FLAG = {
+  racing:["Racing tonight","racing"], rained:["Rained out","rained"],
+  watch:["Watching weather","watch"], standby:["No racing tonight","standby"],
+};
 
-function dirtState(st) {
-  const fields = ["flag", "official"];
-  for (let i = 0; i < fields.length; i++) {
-    const v = st ? st[fields[i]] : null;
-    if (!v) continue;
-    const s = String(v).toLowerCase();
-    if (OFF_WORDS.some(function (w) { return s.indexOf(w) >= 0; })) return "out";
-    if (ON_WORDS.some(function (w) { return s.indexOf(w) >= 0; })) return "go";
-    return "watch";
+function renderFlag(dirt){
+  const el = $("#flag");
+  const status = dirt.status || "OK";
+  let [word, cls] = FLAG[dirt.state] || ["Unknown","offline"];
+  let sub = dirt.label || "";
+  if (status === "OFFLINE" || status === "UNKNOWN"){
+    word = "DirtCheck unreachable"; cls = "offline";
+    sub = "Showing nothing rather than guessing";
+  } else if (status === "STALE"){
+    cls = "offline";                       /* never green on old data */
+    sub = "Last known — source is not responding";
   }
-  return null;
+  el.className = cls;
+  $("#flagWord").textContent = word;
+  $("#flagSub").textContent = sub;
 }
 
-function localDate(d) { return d.toLocaleDateString("en-CA"); }
+const NAMES = {AS:["Albany-Saratoga","Malta NY"], LV:["Lebanon Valley","W Lebanon NY"],
+               FON:["Fonda","Fonda NY"]};
 
-function dirtRead(events, status) {
-  const today = localDate(new Date());
-  const tracks = events.tracks || {};
-  const sts = status.events || {};
-  const races = (events.events || [])
-    .filter(function (e) { return e.type === "race" && e.date >= today; })
-    .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
-
-  const todays = races.filter(function (e) { return e.date === today; }).map(function (e) {
-    const st = sts[today + "|" + e.track] || {};
-    const t = e.times || (tracks[e.track] || {}).defaults || {};
-    const prob = st.prob == null ? null : st.prob;
-    return {
-      name: (tracks[e.track] || {}).short || e.track,
-      title: e.title || "",
-      gates: t.gates || "", hot: t.hotlaps || "",
-      state: dirtState(st) || ((prob || 0) >= 40 ? "watch" : "go"),
-      prob: prob
-    };
-  });
-
-  const next = races.filter(function (e) { return e.date !== today; })[0] || races[0] || null;
-  const nextSt = next ? (sts[next.date + "|" + next.track] || {}) : {};
-
-  return {
-    todays: todays,
-    next: next,
-    nextName: next ? ((tracks[next.track] || {}).short || next.track) : "",
-    nextTimes: next ? (next.times || (tracks[next.track] || {}).defaults || {}) : {},
-    nextProb: nextSt.prob == null ? null : nextSt.prob,
-    left: races.length,
-    total: (events.events || []).filter(function (e) { return e.type === "race"; }).length
-  };
-}
-
-function countdown(dateStr, timeStr) {
-  if (!dateStr) return "";
-  const hm = (timeStr || "18:00").split(":");
-  const ymd = dateStr.split("-");
-  const target = new Date(+ymd[0], +ymd[1] - 1, +ymd[2], +hm[0], +hm[1]);
-  const secs = (target - new Date()) / 1000;
-  if (secs < 0) return "NOW";
-  const d = Math.floor(secs / 86400);
-  const h = Math.floor((secs % 86400) / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  return d ? d + "D " + h + "H" : h ? h + "H " + m + "M" : m + "M";
-}
-
-/* ---------------------------------------------------- bathroom ---- */
-function bathRead(doc) {
-  const ga = doc.ga4 || {}, daily = ga.daily || {};
-  const days = Object.keys(daily).sort();
-  const recent = days.slice(-7);
-  const series = recent.map(function (d) {
-    return { d: d, v: daily[d].sessions || 0, u: daily[d].activeUsers || 0 };
-  });
-  const last = daily[days[days.length - 1]] || {};
-  const prev = daily[days[days.length - 2]] || {};
-  const junk = ["(direct)", "(not set)", "(none)", "test", "qr"];
-  const top = (ga.sources || [])
-    .filter(function (s) { return junk.indexOf(String(s.source || "").toLowerCase()) < 0; })
-    .sort(function (a, b) { return b.sessions - a.sessions; })[0];
-  const gen = doc.generated ? new Date(doc.generated) : null;
-
-  return {
-    series: series,
-    day: days[days.length - 1] || "",
-    users: last.activeUsers || 0,
-    sessions: last.sessions || 0,
-    views: last.pageViews || 0,
-    delta: (last.activeUsers || 0) - (prev.activeUsers || 0),
-    week: series.reduce(function (a, s) { return a + s.v; }, 0),
-    topSource: (top && top.source) || "direct",
-    topSessions: (top && top.sessions) || 0,
-    signups: (ga.events && ga.events.sign_up) || 0,
-    errors: (doc.errors || []).length,
-    stale: gen ? (Date.now() - gen) > 36 * 3600 * 1000 : false,
-    generated: gen
-  };
-}
-
-/* ---------------------------------------------------- render ---- */
-const STATE_LABEL = { go: "RACING", out: "RAINED OUT", watch: "WATCHING" };
-const DOT = { go: "dot--green", out: "dot--red", watch: "dot--yellow" };
-
-function shortTitle(t) {
-  return String(t || "").split(/[\u2014\/+]/)[0].trim();
-}
-
-function renderHero(dirt, bath) {
-  const flag = $("flag"), body = $("heroBody");
-
-  if (dirt && dirt.todays.length) {
-    const allOut = dirt.todays.every(function (t) { return t.state === "out"; });
-    const lead = dirt.todays[0];
-    const cls = allOut ? "flag--red" : lead.state === "watch" ? "flag--yellow" : "flag--green";
-    const word = allOut ? "RED FLAG" : lead.state === "watch" ? "WATCHING SKY" : "GREEN FLAG";
-    flag.className = "flag " + cls;
-    flag.innerHTML = word + '<span class="flag-right">'
-      + esc(countdown(localDate(new Date()), lead.hot)) + " TO HOT LAPS</span>";
-
-    body.innerHTML =
-      '<div class="hero-eyebrow">TONIGHT AT THE TRACK</div>'
-      + '<div class="hero-title">' + esc(allOut ? "Nobody races tonight" : lead.name) + "</div>"
-      + '<div class="hero-sub">' + esc(shortTitle(lead.title)) + "</div>"
-      + '<div class="lineup">'
-      + dirt.todays.map(function (t) {
-          return '<div class="lineup-row"><span class="dot ' + DOT[t.state] + '"></span>'
-            + '<div class="lineup-name">' + esc(t.name)
-            + "<span>GATES " + esc(t.gates) + " \u00B7 HOT LAPS " + esc(t.hot) + "</span></div>"
-            + '<div class="lineup-time">' + (t.prob == null ? "" : t.prob + "%") + "</div>"
-            + '<div class="lineup-state is-' + t.state + '">' + STATE_LABEL[t.state] + "</div></div>";
-        }).join("")
-      + "</div>";
-    return;
+function renderTracks(dirt){
+  const body = $("#trackBody"), status = dirt.status || "OK";
+  if (status === "OFFLINE" || status === "UNKNOWN" || !(dirt.rows||[]).length){
+    body.innerHTML = `<div class="down"><div><b>No data</b>Can't reach DirtCheck</div></div>`;
+    $("#tracksAge").textContent = ""; return;
   }
-
-  // no racing today: BathroomReport traffic leads
-  flag.className = "flag flag--standby";
-  flag.innerHTML = "NO RACING TONIGHT"
-    + (dirt && dirt.next
-        ? '<span class="flag-right">' + esc(dirt.nextName.toUpperCase()) + " IN "
-          + esc(countdown(dirt.next.date, dirt.nextTimes.gates)) + "</span>"
-        : "");
-
-  if (!bath) { body.innerHTML = '<p class="empty">ANALYTICS UNAVAILABLE</p>'; return; }
-
-  const max = Math.max.apply(null, bath.series.map(function (s) { return s.v; }).concat([1]));
-  const dayLabel = bath.day
-    ? new Date(bath.day + "T12:00").toLocaleDateString("en-US", { month: "long", day: "numeric" })
-    : "the last day with data";
-  const move = bath.delta === 0 ? "flat against the day before"
-    : (bath.delta > 0 ? "up " : "down ") + Math.abs(bath.delta) + " from the day before";
-
-  body.innerHTML =
-    '<div class="hero-eyebrow">BATHROOMREPORT \u00B7 SESSIONS</div>'
-    + '<div class="hero-big">' + num(bath.week) + "<small>last 7 days</small></div>"
-    + '<div class="hero-sub">' + num(bath.users) + " active users on " + esc(dayLabel) + ", " + move + ".</div>"
-    + '<div class="chart">'
-    + bath.series.map(function (s) {
-        const pct = Math.round(s.v / max * 100);
-        const d = new Date(s.d + "T12:00");
-        return '<div class="chart-col"><div class="chart-v">' + s.v + "</div>"
-          + '<div class="chart-bar" style="height:100%"><i style="height:' + pct + '%"></i></div>'
-          + '<div class="chart-d">' + d.toLocaleDateString("en-US", { weekday: "narrow" }) + "</div></div>";
-      }).join("")
-    + "</div>"
-    + '<div class="hero-stats">'
-    + '<div><div class="stat-k">TOP REFERRER</div><div class="stat-v">' + bath.topSessions
-      + "<em>" + esc(String(bath.topSource).split(".")[0]) + "</em></div></div>"
-    + '<div><div class="stat-k">PAGE VIEWS</div><div class="stat-v">' + num(bath.views) + "</div></div>"
-    + '<div><div class="stat-k">SIGN-UPS</div><div class="stat-v">' + num(bath.signups) + "</div></div>"
-    + "</div>";
-}
-
-function renderProjects(dirt, bath) {
-  const racing = dirt && dirt.todays.length;
-  $("projLabel").textContent = racing ? "BATHROOMREPORT" : "NEXT RACE";
-  $("projNote").textContent = racing ? "GA4" : "DIRTCHECK";
-  const grid = $("projGrid");
-
-  if (racing) {
-    if (!bath) { grid.innerHTML = '<p class="empty">NO DATA</p>'; return; }
-    grid.innerHTML =
-      '<div><div class="proj-k">SESSIONS 7D</div><div class="proj-v">' + num(bath.week) + "</div></div>"
-      + '<div><div class="proj-k">USERS</div><div class="proj-v">' + num(bath.users) + "</div></div>"
-      + '<div><div class="proj-k">PAGE VIEWS</div><div class="proj-v">' + num(bath.views) + "</div></div>"
-      + '<div><div class="proj-k">TOP SOURCE</div><div class="proj-v">' + bath.topSessions
-        + "<em>" + esc(String(bath.topSource).split(".")[0]) + "</em></div></div>";
-    return;
-  }
-
-  if (!dirt || !dirt.next) { grid.innerHTML = '<p class="empty">SEASON OVER</p>'; return; }
-  const n = dirt.next;
-  const dayName = new Date(n.date + "T12:00").toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
-  grid.innerHTML =
-    '<div><div class="proj-k">' + esc(dirt.nextName.toUpperCase()) + '</div><div class="proj-v">'
-      + dayName + "<em>gates " + esc(dirt.nextTimes.gates || "?") + "</em></div></div>"
-    + '<div><div class="proj-k">RAIN RISK</div><div class="proj-v">'
-      + (dirt.nextProb == null ? "\u2014" : dirt.nextProb) + "<em>%</em></div></div>"
-    + '<div><div class="proj-k">EVENT</div><div class="proj-v" style="font-size:1.2rem;line-height:1.2">'
-      + esc(shortTitle(n.title)) + "</div></div>"
-    + '<div><div class="proj-k">EVENTS LEFT</div><div class="proj-v">' + dirt.left
-      + "<em>of " + dirt.total + "</em></div></div>";
-}
-
-function renderCalendar(cal) {
-  const el = $("calList");
-  if (!cal) { el.innerHTML = '<p class="empty">CALENDAR UNAVAILABLE</p>'; return; }
-  const today = cal.today || [], later = cal.later || [];
-  if (!today.length && !later.length) { el.innerHTML = '<p class="empty">NOTHING ON THE BOOKS</p>'; return; }
-
-  function row(t, title, where, dayTag) {
-    const meta = [dayTag, where].filter(Boolean).join(" \u00B7 ");
-    return '<div class="cal-item"><div class="cal-time' + (t === "ALL" ? " is-allday" : "") + '">'
-      + esc(t) + '</div><div class="cal-title">' + esc(title)
-      + (meta ? '<span class="cal-where">' + esc(meta) + "</span>" : "") + "</div></div>";
-  }
-
-  el.innerHTML =
-    (today.length
-      ? today.map(function (e) { return row(e.time, e.title, e.where); }).join("")
-      : '<p class="empty" style="margin:.5rem 0">NOTHING LEFT TODAY</p>')
-    + (later.length
-      ? '<div class="cal-rule"><span class="cal-rule-label">LATER THIS WEEK</span></div>'
-        + later.map(function (e) { return row(e.time, e.title, e.where, e.day); }).join("")
-      : "");
-}
-
-function parseFeed(xml, fallback) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  if (doc.querySelector("parsererror")) return [];
-  const site = (doc.querySelector("channel > title") || {}).textContent || fallback;
-  const initials = site.replace(/[^A-Za-z ]/g, "").trim().split(/\s+/)
-    .map(function (w) { return w.charAt(0); }).join("").slice(0, 3).toUpperCase();
-  const items = [].slice.call(doc.querySelectorAll("item, entry")).slice(0, 6);
-  return items.map(function (it) {
-    const dateEl = it.querySelector("pubDate, updated, published");
-    const when = new Date(dateEl ? dateEl.textContent : Date.now());
-    const mins = Math.max(0, Math.round((Date.now() - when) / 60000));
-    const titleEl = it.querySelector("title");
-    return {
-      src: initials || "RSS",
-      when: when,
-      title: titleEl ? titleEl.textContent.trim() : "",
-      age: mins < 60 ? mins + "m" : mins < 1440 ? Math.round(mins / 60) + "h" : Math.round(mins / 1440) + "d"
-    };
-  });
-}
-
-function renderNews(items) {
-  const el = $("newsList");
-  if (!items.length) { el.innerHTML = '<p class="empty">NO FEED DATA</p>'; return; }
-  el.innerHTML = items.slice(0, 5).map(function (n) {
-    return '<div class="news-item"><span class="news-src">' + esc(n.src) + "</span>"
-      + '<div class="news-head">' + esc(n.title)
-      + '<span class="news-age">' + esc(n.age) + "</span></div></div>";
+  $("#tracksAge").innerHTML = status === "STALE" ? `<span class="pill">Stale</span>` : "";
+  body.innerHTML = dirt.rows.slice(0,3).map(r=>{
+    const [name,town] = NAMES[r.code] || [r.code,""];
+    const live = r.state && r.state !== "dark";
+    return `<div class="track ${live?"live":"dark"}" data-code="${r.code}">
+      <div class="bar"></div>
+      <div><h3>${name}</h3><div class="town">${town}</div></div>
+      <div><div class="when">${r.when||"—"}</div>
+           <div class="rain">${r.prob==null?"":r.prob+"% rain"}</div></div>
+    </div>`;
   }).join("");
 }
 
-function renderTicker(bath, cal, failures) {
-  const bits = [];
-  if (failures.length) bits.push("OFFLINE \u2014 " + failures.join(", ").toUpperCase());
-  if (bath) {
-    bits.push("BATHROOMREPORT BAKE \u2014 " + (bath.generated
-      ? bath.generated.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).toUpperCase()
-      : "?"));
-    bits.push("PIPELINE ERRORS \u2014 " + bath.errors);
-    if (bath.stale) bits.push("ANALYTICS STALE \u2014 NIGHTLY JOB MISSED A RUN");
+function renderWeather(wx){
+  const body = $("#wxBody"), status = wx.status || "OK";
+  if (status === "OFFLINE" || status === "UNKNOWN" || wx.temp == null){
+    $("#wxWord").textContent = "Weather";
+    body.innerHTML = `<div class="down"><div><b>No data</b>Can't reach Open-Meteo</div></div>`;
+    return;
   }
-  if (cal && cal.generated) {
-    bits.push("CALENDAR \u2014 " + new Date(cal.generated)
-      .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).toUpperCase());
-  }
-  bits.push("BOARD \u2014 REFRESHED " + new Date()
-    .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).toUpperCase());
+  const w = (wx.sky||"clear");
+  $("#wxWord").textContent = w.charAt(0).toUpperCase()+w.slice(1);
 
-  $("tickerTag").className = "ticker-tag" + ((failures.length || (bath && bath.errors)) ? " is-bad" : "");
-  $("tickerRun").innerHTML = bits.map(function (b) { return "<span>" + esc(b) + "</span>"; }).join("");
+  const live = body.querySelector(".wxtemp");
+  if (live){                                   // already built — just move it
+    roll(live, wx.temp);
+    body.querySelector(".wxsub").innerHTML =
+      `Feels ${wx.feels}&deg;<br>Wind ${wx.wind} mph<br>${wx.rain}% rain`;
+    return;
+  }
+  body.innerHTML = `
+    <div class="wxmain">
+      <div class="tempwrap"><div class="wxtemp" data-v="${wx.temp}">${wx.temp}</div>
+        <div class="wxdeg">&deg;F</div></div>
+      <div class="wxsub">Feels ${wx.feels}&deg;<br>Wind ${wx.wind} mph<br>${wx.rain}% rain</div>
+    </div>
+    <div class="days">${(wx.days||[]).map(d=>`
+      <div class="day"><div class="n">${d[0]}</div>
+        <div class="hi">${d[1]}&deg;</div><div class="lo">${d[2]}&deg;</div></div>`).join("")}
+    </div>`;
 }
 
-/* ---------------------------------------------------- clock ---- */
-function tick() {
-  const d = new Date();
-  const h = d.getHours() % 12 || 12;
-  $("clock").innerHTML = h + ":" + String(d.getMinutes()).padStart(2, "0")
-    + '<span class="mer">' + (d.getHours() >= 12 ? "PM" : "AM") + "</span>";
-  $("day").textContent = d.toLocaleDateString("en-US", { weekday: "long" }).toUpperCase();
-  $("date").textContent = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }).toUpperCase();
+function renderNascar(nc){
+  const body = $("#ncBody");
+  if (!nc || !(nc.rows||[]).length){
+    body.innerHTML = `<div class="down"><div><b>No data</b>Can't reach ESPN</div></div>`;
+    return;
+  }
+  $("#ncVenue").textContent = nc.live ? "Racing now" : (nc.venue || "NASCAR");
+  const LONG = {CUP:"Cup Series", XFN:"Xfinity", TRK:"Trucks"};
+  const series = nc.rows.map(r=>`
+    <div class="srow ${r.live?"live":""}">
+      <span class="name">${LONG[r.label]||r.label}</span>
+      <span class="time mono">${r.when}</span>
+      <span class="net">${r.net||""}</span>
+    </div>`).join("");
+  const pod = nc.podium ? `<div class="podium">
+      <div class="eyebrow">Last race &middot; ${nc.podium.venue}</div>
+      ${nc.podium.top.map(t=>`<div class="pod">
+        <span class="pos">${t[0]}</span><span class="who">${t[1]}</span></div>`).join("")}
+    </div>` : "";
+  body.innerHTML = `<div class="series">${series}</div>${pod}`;
 }
 
-/* ---------------------------------------------------- boot ---- */
-async function refresh() {
-  const fails = [];
-  async function settle(name, p) {
-    try { return await p; }
-    catch (e) { fails.push(name); console.warn(name, e); return null; }
-  }
+function renderMedia(jf){
+  const on = jf && jf.playing;
+  document.body.classList.toggle("no-media", !on);
+  if (!on) return;
+  /* Cache-bust on the title, not the clock: a new bust every poll would
+     refetch the same image four times a minute and restart its animation. */
+  const key = encodeURIComponent((jf.title||"") + (jf.sub||""));
+  const src = jf.poster ? `${jf.poster}?k=${key}` : "";
+  const back = $("#backdrop");
+  back.style.backgroundImage = src ? `url("${src}")` : "none";
+  const art = src
+    ? `<img id="poster" src="${src}" alt=""
+            onerror="this.setAttribute('data-empty','');
+                     document.getElementById('backdrop').style.backgroundImage='none'">`
+    : "";
+  $("#mediaBody").innerHTML = `
+    ${art}
+    <div class="meta">
+      <div class="title">${jf.title||""}</div>
+      <div class="ep">${jf.sub||""}</div>
+      <div class="who">${(jf.user||"").toUpperCase()}${jf.paused?" &middot; PAUSED":""}</div>
+      <div class="prog"><i style="width:${jf.pct||0}%"></i></div>
+      <div class="left">${jf.pct!=null?jf.pct+"%":""}</div>
+    </div>`;
+}
 
-  const results = await Promise.all([
-    settle("weather", grab(WEATHER)),
-    settle("dirtcheck", grab(DIRT + "/events.json")),
-    settle("dirtcheck", grab(DIRT + "/status.json")),
-    settle("analytics", grab(BATH)),
-    settle("calendar", grab(CAL))
-  ]);
-  const wx = results[0], dcEvents = results[1], dcStatus = results[2],
-        bathDoc = results[3], calDoc = results[4];
+/* Sky canvas: gradient plus whatever is falling. Same six skies as the
+   Pixoo, so the two displays never disagree about the weather either. */
+const SKIES = {
+  clear:["#20548c","#7ba0d0"], cloudy:["#3f4653","#8b93a3"],
+  rain:["#16222f","#43566b"],  snow:["#303849","#6b7492"],
+  storms:["#1b1b2c","#484464"],night:["#080a22","#30244c"],
+};
+let sky="clear", tick=0, drops=[];
+const cv=$("#sky"), cx=cv.getContext("2d");
 
-  const feeds = await Promise.all(NEWS.map(function (u, i) {
-    return grab(u, "text")
-      .then(function (t) { return parseFeed(t, "Feed " + (i + 1)); })
-      .catch(function () { return []; });
+function seedDrops(){
+  drops = Array.from({length: sky==="storms"?90:56}, ()=>({
+    x:Math.random(), y:Math.random(),
+    s:(sky==="storms"?.010:.006)*(.5+Math.random()),
   }));
-  const news = [].concat.apply([], feeds).sort(function (a, b) { return b.when - a.when; });
+}
+function paintSky(){
+  const w=cv.width=cv.offsetWidth, h=cv.height=cv.offsetHeight;
+  const p=SKIES[sky]||SKIES.clear;
+  const g=cx.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,p[0]); g.addColorStop(1,p[1]);
+  cx.fillStyle=g; cx.fillRect(0,0,w,h);
 
-  if (wx) renderWeather(wx);
-  const dirt = (dcEvents && dcStatus) ? dirtRead(dcEvents, dcStatus) : null;
-  const bath = bathDoc ? bathRead(bathDoc) : null;
-
-  renderHero(dirt, bath);
-  renderProjects(dirt, bath);
-  renderCalendar(calDoc);
-  renderNews(news);
-  renderTicker(bath, calDoc, fails.filter(function (v, i, a) { return a.indexOf(v) === i; }));
+  /* A clear sky with nothing in it is a void. Give it the thing that makes
+     it clear — a low sun, or the moon after dark, breathing slightly. */
+  if(sky==="clear"||sky==="night"){
+    const cxp=w*.78, cyp=h*.30, br=Math.min(w,h)*.17;
+    const pulse=1+Math.sin(tick/90)*.02;
+    const warm = sky==="clear";
+    const halo=cx.createRadialGradient(cxp,cyp,0,cxp,cyp,br*3.2*pulse);
+    halo.addColorStop(0, warm?"rgba(255,226,150,.34)":"rgba(200,214,255,.20)");
+    halo.addColorStop(1, "rgba(0,0,0,0)");
+    cx.fillStyle=halo; cx.beginPath(); cx.arc(cxp,cyp,br*3.2,0,7); cx.fill();
+    cx.fillStyle = warm?"rgba(255,238,196,.92)":"rgba(226,232,250,.88)";
+    cx.beginPath(); cx.arc(cxp,cyp,br*.52*pulse,0,7); cx.fill();
+    if(!warm){                                  // bite a crescent out of it
+      cx.globalCompositeOperation="destination-out";
+      cx.beginPath(); cx.arc(cxp-br*.24,cyp-br*.14,br*.46,0,7); cx.fill();
+      cx.globalCompositeOperation="source-over";
+    }
+  }
+  if(sky==="rain"||sky==="storms"){
+    cx.strokeStyle="rgba(178,208,245,.75)"; cx.lineWidth=Math.max(1,w/900);
+    drops.forEach(d=>{
+      const y=((d.y+tick*d.s)%1.2-.1)*h, x=d.x*w;
+      cx.beginPath(); cx.moveTo(x,y); cx.lineTo(x+w*.004,y+h*.045); cx.stroke();
+    });
+  } else if(sky==="snow"){
+    cx.fillStyle="rgba(255,255,255,.9)";
+    drops.forEach(d=>{
+      const y=((d.y+tick*d.s*.4)%1.2-.1)*h;
+      const x=(d.x+Math.sin((y/h+d.x)*6)*.012)*w;
+      cx.beginPath(); cx.arc(x,y,Math.max(1.2,w/620),0,7); cx.fill();
+    });
+  } else if(sky==="night"){
+    drops.forEach((d,i)=>{
+      const tw=(Math.sin(tick/22+i)+1)/2;
+      cx.fillStyle="rgba(210,220,255,"+(.25+tw*.6)+")";
+      cx.fillRect(d.x*w, d.y*h*.8+h*.1, Math.max(1.4,w/700), Math.max(1.4,w/700));
+    });
+  }
+  tick++; requestAnimationFrame(paintSky);
 }
 
-tick();
-setInterval(tick, 10000);
-refresh();
-setInterval(refresh, REFRESH_MS);
+async function load(){
+  try{
+    const r = await fetch("data/state.json?t="+Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    const s = await r.json();
+    dim(s.hour);
+    renderFlag(s.dirt||{});
+    renderTracks(s.dirt||{});
+    renderWeather(s.weather||{});
+    renderNascar(s.nascar);
+    renderMedia(s.jellyfin);
+    const next = (s.weather||{}).sky || "clear";
+    if(next!==sky){ sky=next; seedDrops(); }
+  }catch(e){
+    /* The board process writes this file. If it's missing, the board is down,
+       which is worth saying plainly rather than leaving yesterday on screen. */
+    $("#flag").className="offline";
+    $("#flagWord").textContent="Board offline";
+    $("#flagSub").textContent="No snapshot from the Pi";
+  }
+}
+seedDrops(); paintSky(); load(); setInterval(load, POLL);
 </script>
 </body>
 </html>

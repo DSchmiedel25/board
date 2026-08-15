@@ -1087,7 +1087,7 @@ def fetch():
 
     if raw_n:
         import nascar as _nascar
-        wx["nascar"] = _nascar.build(raw_n, get=_get)
+        wx["nascar"] = keep_podium(_nascar.build(raw_n, get=_get))
     if radar:
         wx["radar"] = radar
 
@@ -1110,6 +1110,42 @@ def fetch_jellyfin():
                                  clear=SCRIM_TOP)
                  if jf.get("art_id") else None)
     return jf
+
+
+PODIUM_FILE = "last_podium.json"
+
+
+def keep_podium(nc):
+    """Remember the most recent finished race.
+
+    ESPN's events[0] is the *current* race, so a result only lives there
+    between the checkers falling and the next race weekend becoming current.
+    Once Richmond flips to `pre`, last week's Iowa result is simply gone. So
+    the podium is written to disk when it appears and read back when it isn't
+    — which is also what makes it survive a restart.
+    """
+    path = os.path.join(DATA_DIR, PODIUM_FILE)
+    pod = (nc or {}).get("podium")
+
+    # only results get saved — a starting grid is stale within hours
+    if pod and pod.get("kind") == "result":
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(pod, f)
+        except OSError:
+            pass
+        return nc
+
+    if pod:
+        return nc                      # a live grid beats a stored result
+
+    try:
+        with open(path) as f:
+            nc["podium"] = json.load(f)
+    except (OSError, ValueError):
+        pass
+    return nc
 
 
 def fetch_radar():

@@ -151,17 +151,22 @@ def one(doc, label, fallback, now, get=None):
 
 
 def podium(doc):
-    """Top three from the most recent finished Cup race."""
+    """Top three, and whether that's a result or a starting grid.
+
+    ESPN's events[0] is the current race weekend, so before the green flag
+    the competitor list is the starting lineup and afterwards it's the
+    finishing order. Both are worth showing — but the panel has to say which
+    one it is rather than passing a grid off as a result.
+    """
     ev = (doc.get("events") or [{}])[0]
     comp = (ev.get("competitions") or [{}])[0]
     state = ((ev.get("status") or {}).get("type") or {}).get("state", "")
-    if state != "post":
+    if state not in ("post", "pre", "in"):
         return None
 
-    finishers = sorted(
-        [c for c in comp.get("competitors") or [] if c.get("order")],
-        key=lambda c: c["order"])[:3]
-    if len(finishers) < 3:
+    field = sorted([c for c in comp.get("competitors") or [] if c.get("order")],
+                   key=lambda c: c["order"])[:3]
+    if len(field) < 3:
         return None
 
     where = str(ev.get("name") or "")
@@ -170,11 +175,14 @@ def podium(doc):
 
     return {
         "venue": short(where),
+        "kind": "result" if state == "post" else "lineup",
+        "label": {"post": "Last race", "pre": "Starting lineup",
+                  "in": "Running order"}[state],
         "top": [(str(c["order"]),
                  str((c.get("athlete") or {}).get("shortName")
                      or (c.get("athlete") or {}).get("fullName") or "")
                  .split(". ")[-1].upper())
-                for c in finishers],
+                for c in field],
     }
 
 

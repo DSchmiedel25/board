@@ -30,7 +30,8 @@ import requests
 from PIL import Image, ImageDraw
 
 from config import (
-    PIXOO_IP, LAT, LON, DIRTCHECK_BASE, BATHROOM_URL, DATA_DIR,
+    PIXOO_IP, LAT, LON, DIRTCHECK_BASE, DATA_DIR,
+    JELLYFIN_URL, JELLYFIN_KEY, JELLYFIN_USER,
     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
     MORNING, RACE_DAYS, RACE_WINDOW,
 )
@@ -41,6 +42,7 @@ WEATHER_URL = (
     "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m"
     "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
     "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto"
+    "&forecast_days=4"
 )
 CALENDAR_URL = f"file://{DATA_DIR}/next.json"
 
@@ -88,6 +90,7 @@ DEMO_DIRT = {
 DEMO_WX = {
     "temp": 68, "feels": 66, "high": 84, "low": 61,
     "code": 1, "wind": 7, "rain": 20,
+    "days": [("SAT", 84, 61), ("SUN", 79, 58), ("MON", 71, 55)],
 }
 
 DEMO_CAL = {
@@ -96,6 +99,13 @@ DEMO_CAL = {
     "time": "7:30",
     "minutes": 48,
     "more": 3,
+}
+
+DEMO_JF = {
+    "playing": True, "title": "The Bear", "sub": "S3E5", "user": "Dave",
+    "paused": False, "pct": 42, "art_id": None, "transcoding": False,
+    "streams": 1, "watchers": 1,
+    "movies": 812, "episodes": 6104, "series": 137,
 }
 
 DEMO_BATH = {
@@ -500,43 +510,9 @@ def screen_flag(dirt, bath, wx, cal):
     return img
 
 
-def screen_traffic(dirt, bath, wx, cal):
-    """Who showed up. The bar is direction, so the headline is the change
-    rather than a number you have to compare against memory."""
-    img, d = br_canvas()
-    x = bath["delta"]
-    if x > 0:
-        br_bar(d, BR_UP, f"UP {x}")
-    elif x < 0:
-        br_bar(d, BR_DOWN, f"DOWN {abs(x)}")
-    else:
-        br_bar(d, BR_TEAL, "FLAT")
-
-    br_pair(d, ("USERS", bath["users"]), ("NEW", bath["new_users"]))
-    br_footer(d, f"{commas(bath['week_sessions'])} WK")
-    return img
-
-
-def screen_health(dirt, bath, wx, cal):
-    """Quality rather than volume. Silent when things are fine, loud when
-    they aren't — Clarity logged 11 script errors on a day nobody noticed."""
-    img, d = br_canvas()
-
-    kind, word = bath["health"]
-    if kind != "ok":
-        br_bar(d, BR_DOWN, word)                     # bake failed or went stale
-    elif bath["errors"]:
-        br_bar(d, BR_DOWN, f"{bath['errors']} ERRORS")
-    else:
-        br_bar(d, BR_TEAL, "NO ERRORS")
-
-    # "62S" reads as "625" in this font, so the unit lives in the label
-    br_pair(d, ("ACT SEC", bath["engage"]), ("BOTS", bath["bots"]))
-    br_footer(d, f"{bath['dead']} DEAD")
-    return img
-
-
 def screen_weather(dirt, bath, wx, cal):
+    """Now on top, the next three days underneath. The big number is what it
+    is outside right now; everything below is planning."""
     img, d = canvas()
     c, tc, word = wx_bar(wx)
 
@@ -546,17 +522,71 @@ def screen_weather(dirt, bath, wx, cal):
     x = (64 - (SPRITE_W + 3 + tw)) // 2
     draw_sprite(d, word, x, 3, tc)
     draw_text(d, word, x + SPRITE_W + 3, 4, tc, BAR_SCALE)
-    stack(d, f"H {wx['high']}°  L {wx['low']}°", f"FEELS {wx['feels']}°",
-          f"{wx['temp']}°", f"{wx['rain']}% {wx['wind']}MPH",
-          big_color=DUST)
+
+    draw_centered(d, f"{wx['temp']}\u00b0", 20, DUST, 4)
+
+    d.line([2, 43, 61, 43], fill=RAIL)
+    days = wx.get("days") or []
+    for i, (name, hi, lo) in enumerate(days[:3]):
+        cx = 11 + i * 21
+        draw_text(d, name, cx - text_width(name, 1) // 2, 45, SLATE, 1)
+        t = f"{hi}/{lo}"
+        draw_text(d, t, cx - text_width(t, 1) // 2, 51, DUST, 1)
+
+    draw_footer(d, f"{wx['rain']}% {wx['wind']}MPH")
+    return img
+
+
+def screen_jellyfin(dirt, bath, wx, cal):
+    """Poster art full-bleed, title and who's watching along the bottom. At
+    64x64 the art is more recognisable than any amount of text, so it gets
+    the whole panel and the type sits on a scrim over it.
+
+    This screen is skipped entirely when nothing is playing — see the loop.
+    """
+    jf = bath              # the jellyfin bag rides in the same slot
+    img, d = canvas()
+    art = jf.get("art")
+
+    if art is not None:
+        img.paste(art, (0, 0))
+        d = ImageDraw.Draw(img)
+        # darken the lower third so type survives a bright poster
+        scrim = Image.new("RGB", (64, 26), LOAM)
+        img.paste(Image.blend(img.crop((0, 38, 64, 64)), scrim, 0.74), (0, 38))
+        d = ImageDraw.Draw(img)
+        ty = 40
+    else:
+        draw_bar(d, RAIL if jf["paused"] else SODIUM,
+                 "PAUSED" if jf["paused"] else "PLAYING",
+                 SLATE if jf["paused"] else LOAM)
+        ty = 26
+
+    title = jf["title"]
+    tsc = fit_scale(title, 2)
+    draw_centered(d, title, ty, DUST, tsc)
+
+    who = jf.get("user", "")
+    sub = jf.get("sub", "")
+    line2 = f"{sub}  {who}".strip() if sub else who
+    draw_centered(d, line2, ty + text_height(tsc) + 2, SLATE, 1)
+
+    # progress rule sits just above the footer
+    pct = jf.get("pct")
+    if pct is not None:
+        d.line([2, 55, 61, 55], fill=RAIL)
+        d.line([2, 55, 2 + int(59 * pct / 100), 55],
+               fill=SLATE if jf["paused"] else SODIUM)
+
+    draw_footer(d, "PAUSED" if jf["paused"] else
+                (f"{pct}%" if pct is not None else ""))
     return img
 
 
 SCREENS = {
     "flag": screen_flag,
     "weather": screen_weather,
-    "traffic": screen_traffic,
-    "health": screen_health,
+    "jellyfin": screen_jellyfin,
 }
 
 
@@ -578,10 +608,10 @@ def rotation(now=None):
     tracks; mornings lead with the sky; otherwise it spreads evenly."""
     now = now or dt.datetime.now()
     if is_race_night(now):
-        return [("flag", 30), ("weather", 8), ("traffic", 6), ("health", 5)]
+        return [("flag", 30), ("weather", 10), ("jellyfin", 10)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 16), ("flag", 12), ("traffic", 10), ("health", 8)]
-    return [("flag", 12), ("weather", 12), ("traffic", 12), ("health", 10)]
+        return [("weather", 18), ("flag", 12), ("jellyfin", 10)]
+    return [("flag", 14), ("weather", 14), ("jellyfin", 14)]
 
 
 # ---------------------------------------------------------------- data
@@ -608,7 +638,6 @@ def fetch():
     Nothing else in the file needs to change."""
     ev_doc = _get(f"{DIRTCHECK_BASE}/events.json", None, "dirtcheck events")
     st_doc = _get(f"{DIRTCHECK_BASE}/status.json", None, "dirtcheck status")
-    raw_b = _get(BATHROOM_URL, None, "bathroom")
     raw_w = _get(WEATHER_URL, None, "weather")
 
     if ev_doc and st_doc:
@@ -617,11 +646,7 @@ def fetch():
         dirt["rows"] = dirtcheck.track_rows(ev_doc, st_doc)
     else:
         dirt = DEMO_DIRT
-    if raw_b and "ga4" in raw_b:
-        import bathroom
-        bath = bathroom.build(raw_b)
-    else:
-        bath = DEMO_BATH
+    bath = fetch_jellyfin()
     if raw_w and "current" in raw_w:
         cur, day = raw_w["current"], raw_w["daily"]
         wx = {
@@ -632,11 +657,37 @@ def fetch():
             "code": cur["weather_code"],
             "wind": round(cur["wind_speed_10m"]),
             "rain": day["precipitation_probability_max"][0] or 0,
+            "days": [
+                (_day_name(raw_w["daily"]["time"][i]),
+                 round(day["temperature_2m_max"][i]),
+                 round(day["temperature_2m_min"][i]))
+                for i in range(1, min(4, len(day["temperature_2m_max"])))
+            ],
         }
     else:
         wx = DEMO_WX
 
     return dirt, bath, wx, {}
+
+
+def fetch_jellyfin():
+    """Split out from fetch() because it's a call to a box on the same LAN —
+    cheap enough to run every rotation step, so the screen appears within
+    seconds of someone pressing play rather than at the next remote poll."""
+    if not JELLYFIN_KEY:
+        return DEMO_JF
+    import jellyfin
+    sess = jellyfin.sessions(JELLYFIN_URL, JELLYFIN_KEY)
+    cnts = jellyfin.counts(JELLYFIN_URL, JELLYFIN_KEY)
+    jf = jellyfin.build(sess, cnts, user=JELLYFIN_USER)
+    jf["art"] = (jellyfin.poster(JELLYFIN_URL, JELLYFIN_KEY, jf["art_id"])
+                 if jf.get("art_id") else None)
+    return jf
+
+
+def _day_name(iso):
+    y, m, d = (int(x) for x in iso.split("-"))
+    return dt.date(y, m, d).strftime("%a").upper()
 
 
 def brightness_now():
@@ -670,7 +721,7 @@ def main():
 
     if args.preview:
         os.makedirs(args.preview, exist_ok=True)
-        dirt, bath, wx, cal = DEMO_DIRT, DEMO_BATH, DEMO_WX, {}
+        dirt, bath, wx, cal = DEMO_DIRT, DEMO_JF, DEMO_WX, {}
         dark = {**dirt, "state": "standby", "countdown": "1D 17H",
                 "label": "TO GREEN",
                 "rows": [{"code": "AS",  "when": "FRI", "state": "dark", "prob": 5},
@@ -689,7 +740,7 @@ def main():
             SCREENS["flag"](dd, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
-        for name in ("weather", "traffic", "health"):
+        for name in ("weather", "jellyfin"):
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
@@ -702,7 +753,8 @@ def main():
         return
 
     if args.once:
-        name = rotation()[0][0]
+        name = next((n for n, _ in rotation()
+                     if n != "jellyfin" or bath.get("playing")), "flag")
         push(connect(), SCREENS[name](dirt, bath, wx, cal))
         return
 
@@ -714,6 +766,14 @@ def main():
 
         while True:
             for name, dwell in rotation():
+                # Jellyfin is a LAN call, so refresh it every step rather than
+                # on the remote poll. Playback shows up within a few seconds.
+                bath = fetch_jellyfin()
+
+                # nothing playing means no Jellyfin screen at all
+                if name == "jellyfin" and not bath.get("playing"):
+                    continue
+
                 push(dev, SCREENS[name](dirt, bath, wx, cal))
 
                 # Sleep in slices rather than one long block, so a state
@@ -727,7 +787,7 @@ def main():
                     if time.time() - last_fetch < poll_secs():
                         continue
 
-                    dirt, bath, wx, cal = fetch()
+                    dirt, _, wx, cal = fetch()
                     last_fetch = time.time()
 
                     state = dirt.get("state")

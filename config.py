@@ -12,19 +12,38 @@ then `git pull` on the Pi. No SSH editing.
 #
 # Left blank on purpose. A placeholder IP here fails as "host is down", which
 # looks like a network problem rather than an unset value.
-PIXOO_IP = "192.168.1.169"
+PIXOO_IP = ""
 
 # ---------------------------------------------------------------- location
 
 LAT, LON = 42.8142, -73.9396          # Schenectady
+
+# ---------------------------------------------------------------- jellyfin
+
+# The board runs on the Jellyfin box itself, so this stays local. If you move
+# the board to another machine, use http://192.168.1.163:8096 instead.
+JELLYFIN_URL = "http://localhost:8096"
+
+# The API key is NOT stored here — this repo is public. Put it in
+# local_config.py on the machine itself, which .gitignore keeps out of git:
+#
+#   echo 'JELLYFIN_KEY = "your-key-here"' > ~/board/local_config.py
+#
+try:
+    from local_config import JELLYFIN_KEY
+except ImportError:
+    JELLYFIN_KEY = ""
+
+# Leave as None to show any stream in the house; set a username to show only
+# yours.
+JELLYFIN_USER = None
 
 # ---------------------------------------------------------------- sources
 
 # DirtCheck publishes events.json (schedule) and status.json (flags, rain).
 # Note: renaming a repo breaks its GitHub Pages URL — git redirects, Pages
 # does not. If you rename again, this line has to change.
-DIRTCHECK_BASE = "https://raw.githubusercontent.com/dschmiedel25/dirtcheck/main/data"
-BATHROOM_URL = "https://bathroomreport.app/analytics-data.json"
+DIRTCHECK_BASE = "https://dschmiedel25.github.io/dirtcheck/data"
 
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
 # Calendar -> copy link, then change webcal:// to https://

@@ -567,6 +567,12 @@ def is_race_night(now=None):
     return now.weekday() in RACE_DAYS and RACE_WINDOW[0] <= now.hour < RACE_WINDOW[1]
 
 
+def poll_secs(now=None):
+    """How often to re-fetch. A rainout called at 5:55 shouldn't wait five
+    minutes to reach the wall, so race nights poll hard."""
+    return 60 if is_race_night(now) else 300
+
+
 def rotation(now=None):
     """(screen, seconds) pairs. Race nights hand most of the time to the
     tracks; mornings lead with the sky; otherwise it spreads evenly."""
@@ -702,14 +708,37 @@ def main():
 
     if args.loop:
         dev = connect()
-        last_fetch = 0
+        dirt, bath, wx, cal = fetch()
+        last_fetch = time.time()
+        last_state = dirt.get("state")
+
         while True:
             for name, dwell in rotation():
-                if time.time() - last_fetch > 300:      # refresh data every 5 min
+                push(dev, SCREENS[name](dirt, bath, wx, cal))
+
+                # Sleep in slices rather than one long block, so a state
+                # change can cut in instead of waiting out the dwell.
+                waited = 0
+                while waited < dwell:
+                    nap = min(5, dwell - waited)
+                    time.sleep(nap)
+                    waited += nap
+
+                    if time.time() - last_fetch < poll_secs():
+                        continue
+
                     dirt, bath, wx, cal = fetch()
                     last_fetch = time.time()
-                push(dev, SCREENS[name](dirt, bath, wx, cal))
-                time.sleep(dwell)
+
+                    state = dirt.get("state")
+                    if state == last_state:
+                        continue
+
+                    # something changed — show it now, whatever screen is up
+                    last_state = state
+                    push(dev, SCREENS["flag"](dirt, bath, wx, cal))
+                    time.sleep(20)
+                    waited = dwell
 
     ap.print_help()
 

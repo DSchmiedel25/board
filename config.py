@@ -12,7 +12,7 @@ then `git pull` on the Pi. No SSH editing.
 #
 # Left blank on purpose. A placeholder IP here fails as "host is down", which
 # looks like a network problem rather than an unset value.
-PIXOO_IP = ""
+PIXOO_IP = "192.168.1.169"
 
 # ---------------------------------------------------------------- location
 

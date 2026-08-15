@@ -158,12 +158,22 @@ body.no-media #media{display:none}
 .series{flex:1.35;display:flex;flex-direction:column;gap:.5em;min-width:0;
         justify-content:space-around}
 .srow{display:flex;align-items:center;gap:.8em}
+.srow .who{display:flex;flex-direction:column;line-height:1.15;min-width:0}
 .srow .name{font-size:clamp(15px,1.5vw,32px);font-weight:700;
-            letter-spacing:.06em;text-transform:uppercase}
+            letter-spacing:.06em;text-transform:uppercase;color:var(--dust)}
+.srow .track{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+             font-size:.7em;letter-spacing:.13em;color:var(--sodium);
+             text-transform:uppercase;white-space:nowrap;overflow:hidden;
+             text-overflow:ellipsis}
 .srow .stack{margin-left:auto;text-align:right;display:flex;
              flex-direction:column;line-height:1.15}
+.srow .stack.left{margin-left:0;text-align:left;min-width:0}
+.srow .where{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+             font-size:.6em;letter-spacing:.13em;color:var(--slate);
+             text-transform:uppercase;white-space:nowrap;overflow:hidden;
+             text-overflow:ellipsis}
 .srow .date{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-            font-size:.62em;letter-spacing:.14em;color:var(--slate);
+            font-size:.66em;letter-spacing:.14em;color:var(--sodium);
             text-transform:uppercase}
 .srow .time{font-size:clamp(14px,1.35vw,28px);font-weight:700}
 .srow .net{background:var(--sunk);color:var(--sodium);font-weight:800;
@@ -287,7 +297,7 @@ body.no-media #media{display:none}
   </section>
 
   <section class="card" id="nascar">
-    <header><h2 id="ncVenue">NASCAR</h2><span class="eyebrow right">Next race</span></header>
+    <header><h2 id="ncVenue">NASCAR</h2><span class="eyebrow right">Next race per series</span></header>
     <div class="body" id="ncBody"></div>
   </section>
 
@@ -431,17 +441,25 @@ function renderNascar(nc){
     body.innerHTML = `<div class="down"><div><b>No data</b>Can't reach ESPN</div></div>`;
     return;
   }
-  $("#ncVenue").textContent = nc.live ? "Racing now" : (nc.venue || "NASCAR");
+  $("#ncVenue").textContent = nc.live ? "Racing now" : "NASCAR";
   const LONG = {CUP:"Cup Series", XFN:"Xfinity", TRK:"Trucks"};
-  const series = nc.rows.map(r=>`
+  const series = nc.rows.map(r=>{
+    /* Fall back to the short form if an older snapshot has no date field,
+       so the row still says something useful rather than going blank. */
+    const when = r.live ? "RACING" : (r.time || r.when || "");
+    const day  = r.date || (r.when || "").split(" ")[0] || "";
+    return `
     <div class="srow ${r.live?"live":""}">
-      <span class="name">${LONG[r.label]||r.label}</span>
+      <span class="stack left">
+        <span class="name">${LONG[r.label]||r.label}</span>
+        <span class="where">${r.venue||""}</span>
+      </span>
       <span class="stack">
-        <span class="date">${r.date||""}</span>
-        <span class="time mono">${r.live?"RACING":(r.time||r.when||"")}</span>
+        <span class="date">${day}</span>
+        <span class="time mono">${when}</span>
       </span>
       <span class="net">${r.net||""}</span>
-    </div>`).join("");
+    </div>`;}).join("");
   const pod = nc.podium ? `<div class="podium">
       <div class="eyebrow">Last race &middot; ${nc.podium.venue}</div>
       ${nc.podium.top.map(t=>`<div class="pod">

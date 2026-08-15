@@ -17,22 +17,33 @@
   --loam:#100f0d;  --panel:#1b1917;  --sunk:#232120;  --rail:#37342f;
   --dust:#f0ebe0;  --slate:#8a8378;  --sodium:#e8b93f;
   --green:#5fbf5a; --red:#d9534a;   --yellow:#e8b93f;
-  --gap:clamp(10px,1.1vw,22px);
-  --r:clamp(10px,1vw,18px);
+  --gap:20px;
+  --r:17px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 
 /* The sodium wash of track lights, bleeding down from above the board. */
-body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+#app::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
   background:radial-gradient(120% 55% at 50% -12%,
     rgba(247,167,44,.16), rgba(247,167,44,.05) 45%, transparent 70%)}
 /* Dust hanging in the air between you and the panel. */
-#dust{position:fixed;inset:0;pointer-events:none;z-index:60;opacity:.75}
-html,body{height:100%;overflow:hidden;background:var(--loam);color:var(--dust)}
+#dust{position:absolute;inset:0;pointer-events:none;z-index:60;opacity:.75}
+html,body{height:100%;overflow:hidden;background:#000;color:var(--dust)}
+
+/* The board is a single 1920x1080 surface, scaled to whatever is showing it.
+   A phone gets the identical layout, just smaller — no separate mobile
+   version to keep in sync, and what you check on the way home is exactly
+   what's on the wall. */
+#stage{position:fixed;inset:0;overflow:hidden}
+/* Centred by translate rather than by grid alignment: a grid item wider than
+   its container resolves to start, which parks the scaled surface off-screen
+   on a phone. */
+#app{position:absolute;left:50%;top:50%;width:1920px;height:1080px;
+     transform-origin:center center;background:var(--loam)}
 body{
   font-family:"Barlow Condensed","Liberation Sans Narrow","Arial Narrow",
               Helvetica,Arial,sans-serif;
-  font-size:clamp(14px,1.05vw,22px);
+  font-size:22px;
   -webkit-font-smoothing:antialiased;
   transition:filter 3s linear;
 }
@@ -44,7 +55,7 @@ body{
 /* ------------------------------------------------------------ structure */
 #app{
   position:relative;z-index:2;
-  height:100%;padding:var(--gap);display:grid;gap:var(--gap);
+  padding:var(--gap);display:grid;gap:var(--gap);
   grid-template-rows:auto 1.35fr 1fr;
   grid-template-columns:1.4fr 1fr;
   grid-template-areas:"flag flag" "tracks weather" "nascar media";
@@ -70,10 +81,10 @@ body.no-media #media{display:none}
    On a green night it moves. */
 #flag{grid-area:flag;border-radius:var(--r);position:relative;overflow:hidden;
       display:flex;align-items:center;gap:1.2em;
-      padding:clamp(.5em,1.4vh,1em) 1.2em;background:var(--sunk)}
-#flag .word{font-size:clamp(30px,5.6vw,96px);font-weight:900;line-height:.92;
+      padding:1em 1.2em;background:var(--sunk)}
+#flag .word{font-size:96px;font-weight:900;line-height:.92;
             letter-spacing:.02em;text-transform:uppercase;position:relative}
-#flag .sub{font-size:clamp(13px,1.55vw,32px);font-weight:700;opacity:.8;
+#flag .sub{font-size:32px;font-weight:700;opacity:.8;
            margin-left:auto;text-align:right;line-height:1.2;color:inherit;
            text-transform:uppercase;letter-spacing:.14em}
 #flag.racing{background:var(--green);color:#08240f}
@@ -107,12 +118,12 @@ body.no-media #media{display:none}
        align-items:center;background:var(--sunk);border-radius:calc(var(--r)*.7);
        padding:.75em 1em;flex:1;min-height:0}
 .track .bar{width:6px;height:100%;border-radius:3px;background:var(--rail)}
-.track h3{font-size:clamp(19px,2.15vw,46px);font-weight:700;line-height:1;
+.track h3{font-size:46px;font-weight:700;line-height:1;
           text-transform:uppercase;letter-spacing:.01em}
 .track .town{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
              font-size:.66em;color:var(--slate);letter-spacing:.14em;
              text-transform:uppercase}
-.track .when{font-size:clamp(16px,1.75vw,36px);font-weight:700;
+.track .when{font-size:36px;font-weight:700;
              text-align:right;line-height:1.1}
 .track .rain{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
              font-size:.66em;color:var(--slate);text-align:right;
@@ -139,17 +150,17 @@ body.no-media #media{display:none}
 #sky{position:absolute;inset:0;z-index:0;width:100%;height:100%}
 #weather header{background:rgba(0,0,0,.28);position:relative;z-index:2}
 .wxmain{display:flex;align-items:center;gap:.4em;flex:1}
-.wxtemp{font-size:clamp(58px,9vw,168px);font-weight:900;line-height:.8;
+.wxtemp{font-size:168px;font-weight:900;line-height:.8;
         letter-spacing:-.02em}
 .tempwrap{display:flex;align-items:baseline;gap:.08em}
-.wxdeg{font-size:clamp(20px,2.4vw,44px);font-weight:700;opacity:.7}
+.wxdeg{font-size:44px;font-weight:700;opacity:.7}
 .wxsub{margin-left:auto;text-align:right;font-size:.86em;line-height:1.7;color:#dbe6f7}
 .days{display:grid;grid-template-columns:repeat(3,1fr);gap:.6em;margin-top:auto;
       border-top:1px solid rgba(255,255,255,.28);padding-top:.7em}
 .day{text-align:center}
 .day .n{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
         font-size:.68em;color:#c3d4ec;letter-spacing:.18em}
-.day .hi{font-size:clamp(19px,2.1vw,42px);font-weight:800;line-height:1.15}
+.day .hi{font-size:42px;font-weight:800;line-height:1.15}
 .day .lo{font-size:.86em;color:#b3c6e2}
 
 /* ------------------------------------------------------------- nascar */
@@ -159,7 +170,7 @@ body.no-media #media{display:none}
         justify-content:space-around}
 .srow{display:flex;align-items:center;gap:.8em}
 .srow .who{display:flex;flex-direction:column;line-height:1.15;min-width:0}
-.srow .name{font-size:clamp(15px,1.5vw,32px);font-weight:700;
+.srow .name{font-size:32px;font-weight:700;
             letter-spacing:.06em;text-transform:uppercase;color:var(--dust)}
 .srow .track{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
              font-size:.7em;letter-spacing:.13em;color:var(--sodium);
@@ -175,7 +186,7 @@ body.no-media #media{display:none}
 .srow .date{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
             font-size:.66em;letter-spacing:.14em;color:var(--sodium);
             text-transform:uppercase}
-.srow .time{font-size:clamp(14px,1.35vw,28px);font-weight:700}
+.srow .time{font-size:28px;font-weight:700}
 .srow .net{background:var(--sunk);color:var(--sodium);font-weight:800;
            border-radius:.4em;padding:.22em .6em;font-size:.8em;min-width:3.6em;
            text-align:center}
@@ -188,7 +199,7 @@ body.no-media #media{display:none}
 .pod:nth-child(2) .pos{background:#ffd65c}
 .pod:nth-child(3) .pos{background:#c6ced8}
 .pod:nth-child(4) .pos{background:#c68448}
-.pod .who{font-size:clamp(14px,1.3vw,28px);font-weight:700;white-space:nowrap;
+.pod .who{font-size:28px;font-weight:700;white-space:nowrap;
           text-transform:uppercase;letter-spacing:.03em;
           overflow:hidden;text-overflow:ellipsis}
 
@@ -218,7 +229,7 @@ body.no-media #media{display:none}
 #poster[data-empty]{display:none}
 .meta{display:flex;flex-direction:column;gap:.4em;min-width:0;flex:1;
       padding:.2em 0}
-.meta .title{font-size:clamp(21px,2.2vw,46px);font-weight:700;line-height:1.05;
+.meta .title{font-size:46px;font-weight:700;line-height:1.05;
              text-transform:uppercase;letter-spacing:.01em;
              overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;
              -webkit-box-orient:vertical}
@@ -231,7 +242,7 @@ body.no-media #media{display:none}
 /* --------------------------------------------------------- unavailable
    A dead source says so. It never borrows the look of live data. */
 .down{flex:1;display:grid;place-items:center;text-align:center;color:var(--slate)}
-.down b{display:block;font-size:clamp(18px,2vw,40px);color:var(--dust);
+.down b{display:block;font-size:40px;color:var(--dust);
         letter-spacing:.1em;margin-bottom:.25em}
 .pill{font-size:.68em;font-weight:800;letter-spacing:.14em;color:#1a1509;
       background:var(--sodium);border-radius:.4em;padding:.2em .55em}
@@ -241,43 +252,14 @@ body.no-media #media{display:none}
 #nascar{animation-delay:.22s} #media{animation-delay:.28s}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}}
 
-/* Checked from a phone over Tailscale as often as it's read off the wall,
-   so below 900px it stacks into a single column and stops pretending to be
-   a 16:9 panel. */
-@media (max-width:900px), (orientation:portrait){
-  html,body{height:auto;overflow:auto}
-  #app{height:auto;min-height:100vh;grid-template-columns:1fr;
-       grid-template-rows:none;grid-auto-rows:min-content;
-       grid-template-areas:"flag" "tracks" "weather" "nascar" "media"}
-  /* the TV layout sizes cards by grid track; here they size to content */
-  .card{overflow:visible}
-  .card > header{border-radius:var(--r) var(--r) 0 0}
-  .body{flex:none}
-  .track{flex:none}
-  body.no-media #app{grid-template-areas:"flag" "tracks" "weather" "nascar"}
-  #flag{flex-direction:column;align-items:flex-start;gap:.2em}
-  #flag .sub{margin-left:0;text-align:left}
-  #flag .word{font-size:clamp(30px,8vw,58px)}
-  .track{padding:.9em 1em}
-  .track h3{font-size:clamp(19px,5vw,30px)}
-  #weather{min-height:0}
-  .wxmain{flex:none;padding-bottom:.6em}
-  .days{margin-top:.4em}
-  .wxtemp{font-size:clamp(64px,22vw,120px)}
-  #nascar .body{flex-direction:column}
-  .podium{border-left:0;border-top:1px solid var(--rail);
-          padding-left:0;padding-top:.8em}
-  #media .body{flex-direction:row}
-  #poster{height:auto;width:34%}
-}
-
 @media (prefers-reduced-motion:reduce){*{animation:none!important}
   #dust{display:none}}
 </style>
 </head>
 <body class="no-media">
-<canvas id="dust"></canvas>
+<div id="stage">
 <div id="app">
+  <canvas id="dust"></canvas>
   <div id="flag" class="standby">
     <div class="checks l"></div><div class="checks r"></div>
     <div class="sheen"></div>
@@ -308,9 +290,20 @@ body.no-media #media{display:none}
     <div class="body" id="mediaBody"></div>
   </section>
 </div>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
+
+/* Scale the fixed surface to fill whatever screen it lands on. */
+function fit(){
+  const app = $("#app");
+  const k = Math.min(innerWidth / 1920, innerHeight / 1080);
+  app.style.transform = "translate(-50%,-50%) scale(" + k + ")";
+}
+addEventListener("resize", fit);
+addEventListener("orientationchange", () => setTimeout(fit, 120));
+fit();
 
 /* Dust hanging under the lights. Slow, sparse and warm — it should read as
    atmosphere you notice on the second look, not as falling snow. */
@@ -318,8 +311,8 @@ const $ = s => document.querySelector(s);
   const c=$("#dust"), x=c.getContext("2d");
   let bits=[];
   function seed(){
-    c.width=innerWidth; c.height=innerHeight;
-    bits=Array.from({length:Math.round(innerWidth*innerHeight/26000)},()=>({
+    c.width=1920; c.height=1080;
+    bits=Array.from({length:80},()=>({
       x:Math.random()*c.width, y:Math.random()*c.height,
       r:Math.random()*1.7+.5, vx:.06+Math.random()*.22,
       a:.06+Math.random()*.22, p:Math.random()*7,
@@ -336,7 +329,7 @@ const $ = s => document.querySelector(s);
     });
     requestAnimationFrame(paint);
   }
-  seed(); paint(); addEventListener("resize",seed);
+  seed(); paint();
 })();
 
 /* Values roll to their new figure like a scoreboard wheel instead of

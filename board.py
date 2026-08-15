@@ -386,26 +386,27 @@ def draw_footer(img, label, phase=0, color=SLATE):
     _marquee(img, label, LABEL_Y, color, 1, phase)
 
 
-def stack(d, title, sub, big, label, big_color=DUST, title_scale_max=2):
-    """The shared layout: title, subtitle, one big number, one footer.
-    Positions are computed so nothing ever collides."""
-    y = BAR_H + 5
-    tsc = fit_scale(title, title_scale_max)
-    draw_centered(d, title, y, DUST, tsc)
-    y += text_height(tsc) + 3
-    draw_centered(d, sub, y, SLATE, 1)
-    y += text_height(1)
-
-    sc = fit_scale(big, 4)
-    top, bottom = y + 2, LABEL_Y - 2
-    draw_centered(d, big, top + (bottom - top - text_height(sc)) // 2, big_color, sc)
-
-    draw_footer(img, label, phase)
-
-
 def canvas():
     img = Image.new("RGB", (64, 64), LOAM)
     return img, ImageDraw.Draw(img)
+
+
+def draw_unavailable(img, d, what, status):
+    """One look for every dead source. Grey, never green — the eye reads
+    colour before words, and green here would be a lie."""
+    d.rectangle([0, 0, 63, BAR_H], fill=RAIL)
+    word = {"OFFLINE": "OFFLINE", "STALE": "STALE",
+            "UNKNOWN": "NO KEY"}.get(status, "UNKNOWN")
+    draw_centered(d, word, 4, DUST, BAR_SCALE)
+    draw_centered(d, what, 28, SLATE, 1)
+    draw_centered(d, "NO DATA" if status != "STALE" else "LAST KNOWN",
+                  40, SLATE, 1)
+    return img
+
+
+def stale_note(status):
+    """Footer text that admits what the screen is actually showing."""
+    return "" if status == "OK" else status
 
 
 # ---------------------------------------------------------------- screens
@@ -415,8 +416,18 @@ def screen_flag(dirt, bath, wx, cal, phase=0):
     say what each track is doing, so a dark Fonda is as visible as a green
     Albany. When nothing is running, the soonest track is lit — three equally
     dim rows make you read all of them to find the one that matters."""
-    bar_color, bar_text, word = STATES.get(dirt["state"], STATES["standby"])
     img, d = canvas()
+
+    status = dirt.get("status", "OK")
+    if status in ("OFFLINE", "UNKNOWN") or not dirt.get("rows"):
+        return draw_unavailable(img, d, "DIRTCHECK", status)
+
+    bar_color, bar_text, word = STATES.get(dirt["state"], STATES["standby"])
+
+    # Stale data keeps its content but loses its colour. Green is a claim
+    # about right now; an hour-old fetch has no business making it.
+    if status == "STALE":
+        bar_color, bar_text = RAIL, DUST
 
     standby = dirt["state"] == "standby"
     if standby:
@@ -451,7 +462,8 @@ def screen_flag(dirt, bath, wx, cal, phase=0):
         live = r["state"] != "dark"
         hot = (i == lit)
 
-        d.rectangle([0, y, 2, y + ROW_H - 3], fill=risk_chip(r))
+        d.rectangle([0, y, 2, y + ROW_H - 3],
+                    fill=RAIL if status == "STALE" else risk_chip(r))
         draw_text(d, r["code"], 6, y + 1, DUST if (live or hot) else SLATE, 2)
 
         # two fixed columns so a 3-char code and a 3-char day never collide
@@ -462,7 +474,9 @@ def screen_flag(dirt, bath, wx, cal, phase=0):
             draw_text(d, p, 62 - text_width(p, 1), y + 3,
                       DUST if (live or hot) else SLATE, 1)
 
-    draw_footer(img, dirt["label"], phase)
+    note = stale_note(status)
+    draw_footer(img, f"{dirt['label']}  {note}".strip() if note
+                else dirt["label"], phase, SODIUM if note else SLATE)
     return img
 
 
@@ -470,6 +484,11 @@ def screen_weather(dirt, bath, wx, cal, phase=0):
     """Now on top, the next three days underneath. The big number is what it
     is outside right now; everything below is planning."""
     img, d = canvas()
+
+    status = wx.get("status", "OK")
+    if status in ("OFFLINE", "UNKNOWN") or "temp" not in wx:
+        return draw_unavailable(img, d, "WEATHER", status)
+
     c, tc, word = wx_bar(wx)
 
     # sprite and word travel together as one centred group
@@ -489,7 +508,10 @@ def screen_weather(dirt, bath, wx, cal, phase=0):
         t = f"{hi}/{lo}"
         draw_text(d, t, cx - text_width(t, 1) // 2, 51, DUST, 1)
 
-    draw_footer(img, f"{wx['rain']}% RAIN  {wx['wind']} MPH", phase)
+    note = stale_note(wx.get("status", "OK"))
+    draw_footer(img, f"{wx['rain']}% RAIN  {wx['wind']} MPH"
+                + (f"  {note}" if note else ""), phase,
+                SODIUM if note else SLATE)
     return img
 
 
@@ -690,6 +712,25 @@ def _get(url, fallback, name):
         return fallback
 
 
+CACHE = {}                 # name -> (value, unix_seconds)
+STALE_AFTER = 3600         # an hour old stops counting as current
+
+
+def remember(name, value):
+    CACHE[name] = (value, time.time())
+    return value
+
+
+def recall(name):
+    """Last good value and its state. Anything older than STALE_AFTER is
+    reported as STALE so the screen can say so rather than implying it's now."""
+    got = CACHE.get(name)
+    if not got:
+        return None, "OFFLINE"
+    value, when = got
+    return value, ("STALE" if time.time() - when > STALE_AFTER else "OK")
+
+
 def fetch():
     """Adjust the two mappings below to match your real JSON.
     Nothing else in the file needs to change."""
@@ -698,12 +739,21 @@ def fetch():
     raw_w = _get(WEATHER_URL, None, "weather")
     raw_n = fetch_nascar()
 
+    # NEVER fall back to demo data here. A demo Albany is green and racing,
+    # so a failed fetch would put a confident "RACING" on the wall when the
+    # truth is that we cannot reach DirtCheck. Last known good, clearly aged,
+    # or an explicit offline state.
     if ev_doc and st_doc:
         import dirtcheck
         dirt = dirtcheck.build(ev_doc, st_doc)
         dirt["rows"] = dirtcheck.track_rows(ev_doc, st_doc)
+        dirt["status"] = "OK"
+        remember("dirt", dirt)
     else:
-        dirt = DEMO_DIRT
+        cached, state = recall("dirt")
+        dirt = dict(cached) if cached else {"state": "unknown", "rows": [],
+                                           "label": ""}
+        dirt["status"] = state
     bath = fetch_jellyfin()
     if raw_w and "current" in raw_w:
         cur, day = raw_w["current"], raw_w["daily"]
@@ -722,8 +772,12 @@ def fetch():
                 for i in range(1, min(4, len(day["temperature_2m_max"])))
             ],
         }
+        wx["status"] = "OK"
+        remember("wx", wx)
     else:
-        wx = DEMO_WX
+        cached, state = recall("wx")
+        wx = dict(cached) if cached else {}
+        wx["status"] = state
 
     if raw_n:
         import nascar as _nascar
@@ -737,7 +791,7 @@ def fetch_jellyfin():
     cheap enough to run every rotation step, so the screen appears within
     seconds of someone pressing play rather than at the next remote poll."""
     if not JELLYFIN_KEY:
-        return DEMO_JF
+        return {"playing": False, "status": "UNKNOWN"}
     import jellyfin
     sess = jellyfin.sessions(JELLYFIN_URL, JELLYFIN_KEY)
     cnts = jellyfin.counts(JELLYFIN_URL, JELLYFIN_KEY)
@@ -773,9 +827,18 @@ def brightness_now():
 
 def connect():
     if not PIXOO_IP:
-        sys.exit("PIXOO_IP is not set in config.py. Find it in the Divoom app "
-                 "under your device's settings, or run:\n"
-                 "  curl -s -X POST https://app.divoom-gz.com/Device/ReturnSameLANDevice")
+        sys.exit(
+            "PIXOO_IP is not set.\n"
+            "\n"
+            "It belongs in local_config.py, which git ignores — so a pull can\n"
+            "never overwrite it. On this machine:\n"
+            "\n"
+            "  cd ~/board\n"
+            "  cp local_config.example.py local_config.py\n"
+            "  nano local_config.py\n"
+            "\n"
+            "Find the IP in the Divoom app under your device's settings, or:\n"
+            "  curl -s -X POST https://app.divoom-gz.com/Device/ReturnSameLANDevice")
     from pixoo_client import Pixoo
     return Pixoo(PIXOO_IP)
 
@@ -796,6 +859,7 @@ def main():
     if args.preview:
         os.makedirs(args.preview, exist_ok=True)
         dirt, bath, wx, cal = DEMO_DIRT, DEMO_JF, DEMO_WX, {}
+        dirt["status"] = wx["status"] = "DEMO"
         dark = {**dirt, "state": "standby", "countdown": "1D 17H",
                 "label": "TO GREEN",
                 "rows": [{"code": "AS",  "when": "FRI", "state": "dark", "prob": 5},

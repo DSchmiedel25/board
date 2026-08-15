@@ -9,7 +9,10 @@ then `git pull` on the Pi. No SSH editing.
 
 # Divoom app -> your device -> settings. Give it a DHCP reservation in your
 # router so it doesn't move.
-PIXOO_IP = "192.168.1.169"
+#
+# Left blank on purpose. A placeholder IP here fails as "host is down", which
+# looks like a network problem rather than an unset value.
+PIXOO_IP = ""
 
 # ---------------------------------------------------------------- location
 
@@ -17,29 +20,11 @@ LAT, LON = 42.8142, -73.9396          # Schenectady
 
 # ---------------------------------------------------------------- sources
 
-# DirtCall publishes events.json (schedule) and status.json (flags, rain).
-DIRTCALL_BASE = "https://dschmiedel25.github.io/dirtcall/data"
+# DirtCheck publishes events.json (schedule) and status.json (flags, rain).
+# Note: renaming a repo breaks its GitHub Pages URL — git redirects, Pages
+# does not. If you rename again, this line has to change.
+DIRTCHECK_BASE = "https://dschmiedel25.github.io/dirtcheck/data"
 BATHROOM_URL = "https://bathroomreport.app/analytics-data.json"
-
-# Jellyfin. The board runs on the same Pi as the server, so localhost is
-# right and the traffic never leaves the box. Create the key in
-# Dashboard -> API Keys and name it something you'll recognise later.
-JELLYFIN_URL = "http://localhost:8096"
-JELLYFIN_KEY = "151ce4d992f74ad2a79ed41cd6e20774"
-
-# LIFX bulb near the TV. lifx_jf.py caches its MAC on first discovery, so this
-# only has to be right once — give the bulb a DHCP reservation anyway.
-LIFX_IP = "192.168.1.218"
-
-# Only follow this user's playback. Someone else streaming from another house
-# should not repaint a lamp in this room. Set to None to follow any stream,
-# or use LIFX_DEVICE instead to tie the bulb to one screen.
-LIFX_USER = "Dave"
-LIFX_DEVICE = None          # e.g. "Living Room Apple TV" — matched loosely
-
-# Turn the bulb on when a stream starts and off when everything stops. With
-# this off, the bulb is only ever recoloured — never switched.
-LIFX_AUTO_POWER = True
 
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
 # Calendar -> copy link, then change webcal:// to https://

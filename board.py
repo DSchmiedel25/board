@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-board.py — DirtCall + BathroomReport on a Divoom Pixoo-64.
+board.py — DirtCheck + BathroomReport on a Divoom Pixoo-64.
 
 Four screens, drawn at 64x64 with a built-in pixel font (no font file,
 no anti-aliasing):
@@ -30,8 +30,7 @@ import requests
 from PIL import Image, ImageDraw
 
 from config import (
-    PIXOO_IP, LAT, LON, DIRTCALL_BASE, BATHROOM_URL, DATA_DIR,
-    JELLYFIN_URL, JELLYFIN_KEY,
+    PIXOO_IP, LAT, LON, DIRTCHECK_BASE, BATHROOM_URL, DATA_DIR,
     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
     MORNING, RACE_DAYS, RACE_WINDOW,
 )
@@ -64,11 +63,6 @@ BR_MUTED = (147, 165, 184)    # #93a5b8
 BR_LINE  = (42, 64, 86)       # #2a4056  panel border
 BR_UP    = (143, 214, 148)    # #8fd694
 BR_DOWN  = (240, 138, 134)    # #f08a86
-
-# Jellyfin's own two brand colours, so its screens read as a third place
-JF_PURPLE = (170, 92, 195)    # #aa5cc3
-JF_BLUE   = (0, 164, 220)     # #00a4dc
-JF_INK    = (14, 14, 22)      # bar text on either of the above
 
 # flag states: bar color, bar text color, word
 STATES = {
@@ -115,17 +109,6 @@ DEMO_BATH = {
     "week_sessions": 45, "top_source": "facebook.com", "top_sessions": 8,
     "signups": 1,
 }
-
-DEMO_JF = {
-    "playing": True, "title": "THE PITT", "sub": "S1E4", "user": "AMANDA",
-    "paused": False, "pct": 38, "art_id": None, "transcoding": False,
-    "streams": 1, "watchers": 1,
-    "movies": 412, "episodes": 3180, "series": 96,
-}
-
-# Populated by refresh_jf(). Kept module-level so the screens keep the same
-# (dirt, bath, wx, cal) signature as the other four.
-JF = None
 
 # ---------------------------------------------------------------- 3x5 font
 
@@ -222,61 +205,6 @@ def fit_scale(s, max_scale, width=64, pad=2):
         if text_width(s, sc) <= width - pad * 2:
             return sc
     return 1
-
-
-def clip_text(s, scale=1, width=60):
-    """fit_scale shrinks until it fits or runs out of scales. Titles are the
-    one field long enough to overflow even at scale 1, so trim too — whole
-    words first, because a title cut mid-word reads as a rendering fault."""
-    s = (s or "").upper()
-    while s and text_width(s, scale) > width and " " in s:
-        s = s[:s.rfind(" ")]
-    while s and text_width(s, scale) > width:
-        s = s[:-1]
-    return s.rstrip(" ,.-:")
-
-
-FILLER = {"THE", "A", "AN", "AND", "OF", "TO", "IN", "ON", "FOR", "&"}
-
-
-def fit_lines(s, max_scale=2, width=60, max_lines=2):
-    """Wrap a title to at most two lines, at the largest scale that holds all
-    of it. Truncating "EVERYTHING EVERYWHERE ALL AT ONCE" down to EVERYTHING
-    loses the title; two smaller lines keep it. Returns (lines, scale)."""
-    s = (s or "").upper()
-    words = s.split()
-    if not words:
-        return [], 1
-
-    def wrap_at(sc):
-        lines, cur = [], ""
-        for w in words:
-            t = (cur + " " + w).strip()
-            if text_width(t, sc) <= width:
-                cur = t
-            else:
-                if cur:
-                    lines.append(cur)
-                cur = w
-        if cur:
-            lines.append(cur)
-        return lines
-
-    for sc in range(max_scale, 0, -1):
-        if any(text_width(w, sc) > width for w in words):
-            continue                      # a single word won't fit; go smaller
-        lines = wrap_at(sc)
-        if len(lines) <= max_lines:
-            return lines, sc
-
-    # nothing fits whole — show as much as two small lines can carry, minus
-    # any dangling article, because "BEYOND THE" reads as a broken string
-    kept = [clip_text(l, 1, width) for l in wrap_at(1)[:max_lines]]
-    while kept and kept[-1].split() and kept[-1].split()[-1] in FILLER:
-        kept[-1] = kept[-1][:kept[-1].rfind(" ")] if " " in kept[-1] else ""
-        if not kept[-1]:
-            kept.pop()
-    return kept, 1
 
 
 def commas(n):
@@ -598,8 +526,7 @@ def screen_health(dirt, bath, wx, cal):
     if kind != "ok":
         br_bar(d, BR_DOWN, word)                     # bake failed or went stale
     elif bath["errors"]:
-        br_bar(d, BR_DOWN, f"{bath['errors']} ERROR" +
-               ("S" if bath['errors'] != 1 else ""))
+        br_bar(d, BR_DOWN, f"{bath['errors']} ERRORS")
     else:
         br_bar(d, BR_TEAL, "NO ERRORS")
 
@@ -625,166 +552,11 @@ def screen_weather(dirt, bath, wx, cal):
     return img
 
 
-PLAY_ICON  = ["#..", "##.", "###", "##.", "#.."]
-PAUSE_ICON = ["#.#", "#.#", "#.#", "#.#", "#.#"]
-
-MARQUEE_FRAMES = 56       # device tops out around 60; leave headroom
-MARQUEE_PXPS   = 18       # pixels per second — slow enough to read
-MARQUEE_GAP    = 12       # blank run between the end and the wrap-around
-RAIL_Y         = 49       # progress rail
-TITLE_Y        = 52       # the row that scrolls
-INFO_Y         = 58       # who's watching, and the year or episode
-
-
-def draw_icon(d, rows, x, y, color):
-    for ry, row in enumerate(rows):
-        for rx, c in enumerate(row):
-            if c == "#":
-                d.point((x + rx, y + ry), fill=color)
-
-
-def scrim(img, bands):
-    """Darken bands of rows so type reads over artwork, leaving the rest of
-    the poster alone. bands is [(y0, y1, alpha_at_y0, alpha_at_y1), ...]."""
-    over = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    od = ImageDraw.Draw(over)
-    for y0, y1, a0, a1 in bands:
-        span = max(1, y1 - y0)
-        for y in range(y0, y1 + 1):
-            a = int(a0 + (a1 - a0) * (y - y0) / span)
-            od.line([0, y, 63, y], fill=(0, 0, 0, max(0, min(255, a))))
-    return Image.alpha_composite(img.convert("RGBA"), over).convert("RGB")
-
-
-def text_mask(s):
-    """Render a line of text to a 1-bit mask, width whatever it needs.
-
-    A mask rather than a bitmap: pasting an RGB strip would drop an opaque
-    black box over the poster. The marquee slices windows out of this instead
-    of re-rendering the type on every frame.
-    """
-    w = max(1, text_width(s, 1))
-    m = Image.new("L", (w, GH), 0)
-    draw_text(ImageDraw.Draw(m), s, 0, 0, 255, 1)
-    return m
-
-
-def paste_text(img, mask, xy, color):
-    img.paste(Image.new("RGB", mask.size, color), xy, mask)
-
-
-def screen_jfnow(dirt, bath, wx, cal):
-    """What's on. The poster gets the panel; the title runs small along the
-    bottom so nothing covers the art.
-
-    Returns a list of frames when the line is too long to sit still — the
-    device loops them itself, so a marquee costs one burst of POSTs instead
-    of a frame every 80ms for the whole dwell.
-    """
-    jf = JF or DEMO_JF
-
-    if not jf["playing"]:
-        # rotation() drops this screen when nothing is playing, so this only
-        # shows if playback stopped between picking the screen and drawing it
-        img, d = canvas()
-        sc = min(fit_scale("NOTHING", 2), fit_scale("PLAYING", 2))
-        draw_bar(d, LOAM, "IDLE", SLATE, rule=True)
-        draw_centered(d, "NOTHING", 26, SLATE, sc)
-        draw_centered(d, "PLAYING", 26 + text_height(sc) + 4, SLATE, sc)
-        draw_footer(d, "")
-        return img
-
-    art = None
-    if jf.get("art_id"):
-        import jellyfin as _jf
-        art = _jf.poster(JELLYFIN_URL, JELLYFIN_KEY, jf["art_id"])
-
-    # ---- everything that doesn't move, drawn once
-    base, d = canvas()
-    if art is not None:
-        base.paste(art.resize((64, 64)), (0, 0))
-        base = scrim(base, [(44, 50, 0, 175), (51, 63, 175, 225)])
-        d = ImageDraw.Draw(base)
-
-    pct = jf["pct"]
-    rail = SODIUM if jf["paused"] else JF_BLUE
-    if pct is not None:
-        d.rectangle([2, RAIL_Y, 61, RAIL_Y + 1], fill=RAIL)
-        w = int(59 * pct / 100)
-        if w:
-            d.rectangle([2, RAIL_Y, 2 + w, RAIL_Y + 1], fill=rail)
-
-    # bottom row holds the things that fit: glyph, name, and the year or
-    # episode. Only the title is long enough to need moving.
-    draw_icon(d, PAUSE_ICON if jf["paused"] else PLAY_ICON, 1, INFO_Y, rail)
-    sub = clip_text(jf["sub"], 1, 24) if jf["sub"] else ""
-    if sub:
-        draw_text(d, sub, 62 - text_width(sub, 1), INFO_Y, SODIUM, 1)
-    room = 62 - 6 - (text_width(sub, 1) + 4 if sub else 0)
-    who = clip_text(jf["user"], 1, room)
-    if who:
-        draw_text(d, who, 6, INFO_Y, DUST, 1)
-
-    # ---- the title, still if it fits and scrolling if it doesn't
-    title = (jf["title"] or "").upper()
-    mask = text_mask(title)
-    window = 62
-
-    if mask.width <= window:
-        paste_text(base, mask, (1 + (window - mask.width) // 2, TITLE_Y), DUST)
-        return base
-
-    loop = mask.width + MARQUEE_GAP
-    step = max(1, -(-loop // MARQUEE_FRAMES))      # ceil, so we stay under cap
-
-    # a double-wide tape means each window is a straight crop, no wrap maths
-    tape = Image.new("L", (loop * 2, GH), 0)
-    tape.paste(mask, (0, 0))
-    tape.paste(mask, (loop, 0))
-
-    frames = []
-    for off in range(0, loop, step):
-        f = base.copy()
-        paste_text(f, tape.crop((off, 0, off + window, GH)), (1, TITLE_Y), DUST)
-        frames.append(f)
-
-    return MarqueeFrames(frames, max(40, int(1000 * step / MARQUEE_PXPS)))
-
-
-class MarqueeFrames(list):
-    """A list of frames that also carries its playback speed, so push() can
-    tell an animation from a still without changing every screen's signature."""
-
-    def __init__(self, frames, speed_ms):
-        super().__init__(frames)
-        self.speed_ms = speed_ms
-
-
-def screen_jflib(dirt, bath, wx, cal):
-    """The library at a glance. Streams drive the bar, because the counts
-    only move on a scan and the streams move all evening."""
-    jf = JF or DEMO_JF
-    img, d = canvas()
-
-    n = jf["streams"]
-    if n:
-        draw_bar(d, JF_PURPLE, f"{n} STREAM" + ("S" if n > 1 else ""), JF_INK)
-    else:
-        draw_bar(d, LOAM, "JELLYFIN", SLATE, rule=True)
-
-    stack(d, f"{commas(jf['movies'])} MOVIES",
-          f"{commas(jf['series'])} SERIES",
-          commas(jf["episodes"]), "EPISODES", big_color=JF_BLUE)
-    return img
-
-
 SCREENS = {
     "flag": screen_flag,
     "weather": screen_weather,
     "traffic": screen_traffic,
     "health": screen_health,
-    "jfnow": screen_jfnow,
-    "jflib": screen_jflib,
 }
 
 
@@ -796,22 +568,14 @@ def is_race_night(now=None):
 
 
 def rotation(now=None):
-    """(screen, seconds) pairs.
-
-    Jellyfin only appears while something is playing. An idle media server
-    has nothing to say that's worth a slot — the counts move once a week.
-    """
+    """(screen, seconds) pairs. Race nights hand most of the time to the
+    tracks; mornings lead with the sky; otherwise it spreads evenly."""
     now = now or dt.datetime.now()
-    watching = bool(JF and JF.get("playing"))
-
     if is_race_night(now):
-        r = [("flag", 30), ("weather", 10)]
-        return r + [("jfnow", 12)] if watching else r
-    if watching:
-        return [("jfnow", 24), ("flag", 12), ("weather", 12)]
+        return [("flag", 30), ("weather", 8), ("traffic", 6), ("health", 5)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 20), ("flag", 16)]
-    return [("flag", 16), ("weather", 16)]
+        return [("weather", 16), ("flag", 12), ("traffic", 10), ("health", 8)]
+    return [("flag", 12), ("weather", 12), ("traffic", 12), ("health", 10)]
 
 
 # ---------------------------------------------------------------- data
@@ -833,32 +597,18 @@ def _get(url, fallback, name):
         return fallback
 
 
-def refresh_jf():
-    """Sessions change by the second and the server is on localhost, so this
-    runs every frame rather than riding the five-minute fetch. Counts are
-    cached inside the module, so this is one cheap call most of the time."""
-    global JF
-    try:
-        import jellyfin as _jf
-        JF = _jf.build(_jf.sessions(JELLYFIN_URL, JELLYFIN_KEY),
-                       _jf.counts(JELLYFIN_URL, JELLYFIN_KEY))
-    except Exception as e:
-        print(f"jellyfin fetch failed ({e})", file=sys.stderr)
-
-
 def fetch():
     """Adjust the two mappings below to match your real JSON.
     Nothing else in the file needs to change."""
-    refresh_jf()
-    ev_doc = _get(f"{DIRTCALL_BASE}/events.json", None, "dirtcall events")
-    st_doc = _get(f"{DIRTCALL_BASE}/status.json", None, "dirtcall status")
-    raw_b = None                    # BathroomReport screens are out of the rotation
+    ev_doc = _get(f"{DIRTCHECK_BASE}/events.json", None, "dirtcheck events")
+    st_doc = _get(f"{DIRTCHECK_BASE}/status.json", None, "dirtcheck status")
+    raw_b = _get(BATHROOM_URL, None, "bathroom")
     raw_w = _get(WEATHER_URL, None, "weather")
 
     if ev_doc and st_doc:
-        import dirtcall
-        dirt = dirtcall.build(ev_doc, st_doc)
-        dirt["rows"] = dirtcall.track_rows(ev_doc, st_doc)
+        import dirtcheck
+        dirt = dirtcheck.build(ev_doc, st_doc)
+        dirt["rows"] = dirtcheck.track_rows(ev_doc, st_doc)
     else:
         dirt = DEMO_DIRT
     if raw_b and "ga4" in raw_b:
@@ -901,10 +651,7 @@ def connect():
 
 def push(dev, img):
     dev.set_brightness(brightness_now())
-    if isinstance(img, list):
-        dev.push_frames(img, getattr(img, "speed_ms", 100))
-    else:
-        dev.push_image(img)
+    dev.push_image(img)
 
 
 def main():
@@ -940,27 +687,6 @@ def main():
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
-
-        global JF
-        for label, state in (
-            ("jf-playing", DEMO_JF),
-            ("jf-paused", {**DEMO_JF, "paused": True, "pct": 61}),
-            ("jf-idle", {**DEMO_JF, "playing": False, "streams": 0}),
-        ):
-            JF = state
-            out = SCREENS["jfnow"](dirt, bath, wx, cal)
-            if isinstance(out, list):
-                out[0].save(os.path.join(args.preview, f"{label}.gif"),
-                            save_all=True, append_images=out[1:],
-                            duration=getattr(out, "speed_ms", 100), loop=0)
-                print(f"{label} ({len(out)} frames)")
-            else:
-                out.save(os.path.join(args.preview, f"{label}.png"))
-                print(label)
-        JF = DEMO_JF
-        SCREENS["jflib"](dirt, bath, wx, cal).save(
-            os.path.join(args.preview, "jflib.png"))
-        print("jflib")
         return
 
     dirt, bath, wx, cal = fetch()
@@ -982,8 +708,6 @@ def main():
                 if time.time() - last_fetch > 300:      # refresh data every 5 min
                     dirt, bath, wx, cal = fetch()
                     last_fetch = time.time()
-                else:
-                    refresh_jf()                        # local, so poll it often
                 push(dev, SCREENS[name](dirt, bath, wx, cal))
                 time.sleep(dwell)
 

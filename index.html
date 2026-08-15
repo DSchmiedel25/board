@@ -209,7 +209,7 @@ body{
 
 <script>
 /* =====================================================================
-   Sources. Weather, DirtCall and BathroomReport all send CORS headers, so
+   Sources. Weather, DirtCheck and BathroomReport all send CORS headers, so
    the page fetches them straight from the browser. News and calendar can't
    be, so cron drops them in /data/ and we read them off localhost.
    ===================================================================== */
@@ -219,7 +219,7 @@ const WEATHER = "https://api.open-meteo.com/v1/forecast?latitude=" + LAT + "&lon
   + "&hourly=temperature_2m,precipitation_probability"
   + "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
   + "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=2";
-const DIRT = "https://dschmiedel25.github.io/dirtcall/data";
+const DIRT = "https://dschmiedel25.github.io/dirtcheck/data";
 const BATH = "https://bathroomreport.app/analytics-data.json";
 const NEWS = ["/data/news1.xml", "/data/news2.xml"];
 const CAL  = "/data/next.json";
@@ -307,7 +307,7 @@ function renderWeather(w) {
     + '<p class="wx-quip">' + esc(quip(cur, rain, hours)) + "</p>";
 }
 
-/* ---------------------------------------------------- dirtcall ---- */
+/* ---------------------------------------------------- dirtcheck ---- */
 const OFF_WORDS = ["rain", "postpone", "cancel", "off"];
 const ON_WORDS = ["green", "go", "racing", "run"];
 
@@ -484,7 +484,7 @@ function renderHero(dirt, bath) {
 function renderProjects(dirt, bath) {
   const racing = dirt && dirt.todays.length;
   $("projLabel").textContent = racing ? "BATHROOMREPORT" : "NEXT RACE";
-  $("projNote").textContent = racing ? "GA4" : "DIRTCALL";
+  $("projNote").textContent = racing ? "GA4" : "DIRTCHECK";
   const grid = $("projGrid");
 
   if (racing) {
@@ -607,8 +607,8 @@ async function refresh() {
 
   const results = await Promise.all([
     settle("weather", grab(WEATHER)),
-    settle("dirtcall", grab(DIRT + "/events.json")),
-    settle("dirtcall", grab(DIRT + "/status.json")),
+    settle("dirtcheck", grab(DIRT + "/events.json")),
+    settle("dirtcheck", grab(DIRT + "/status.json")),
     settle("analytics", grab(BATH)),
     settle("calendar", grab(CAL))
   ]);

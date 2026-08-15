@@ -933,6 +933,17 @@ def rotation(now=None):
 
 # ---------------------------------------------------------------- data
 
+# Deliberately no User-Agent override. Measured against ESPN from the Pi:
+#
+#   python-requests (default)  200      board/1.0        403
+#   curl/8.5.0                 200      spoofed Chrome   403
+#   Python-urllib/3.11         200      empty, Wget      403
+#
+# It allows recognised script agents and refuses unknown or spoofed ones, so
+# a browser-shaped header reads as a bot and an honest default sails through.
+# Open-Meteo and GitHub Pages don't care either way.
+
+
 def _get(url, fallback, name):
     """Uses requests rather than urllib. The python.org macOS build ships
     without a wired-up CA bundle, so urllib fails every HTTPS call with
@@ -942,11 +953,13 @@ def _get(url, fallback, name):
         if url.startswith("file://"):
             with open(url[7:], "r") as f:
                 return json.load(f)
-        r = requests.get(url, timeout=10, headers={"User-Agent": "board/1.0"})
+        r = requests.get(url, timeout=10)
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"{name} fetch failed ({e}); using demo data", file=sys.stderr)
+        # No demo fallback in production — the caller decides between last
+        # known good and an explicit offline state.
+        print(f"{name} fetch failed ({e})", file=sys.stderr)
         return fallback
 
 

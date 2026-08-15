@@ -58,13 +58,6 @@ YELLOW = (229, 195, 74)
 
 # BathroomReport's own palette, from its stylesheet. The project screens use
 # it so they read as a different place from the track and weather screens.
-BR_TEAL  = (46, 161, 170)     # #2ea1aa  PWA theme colour
-BR_NAVY  = (11, 25, 42)       # #0b192a  charcoal
-BR_CREAM = (245, 247, 250)    # #f5f7fa
-BR_MUTED = (147, 165, 184)    # #93a5b8
-BR_LINE  = (42, 64, 86)       # #2a4056  panel border
-BR_UP    = (143, 214, 148)    # #8fd694
-BR_DOWN  = (240, 138, 134)    # #f08a86
 
 # flag states: bar color, bar text color, word
 STATES = {
@@ -91,6 +84,10 @@ DEMO_WX = {
     "temp": 68, "feels": 66, "high": 84, "low": 61,
     "code": 1, "wind": 7, "rain": 20,
     "days": [("SAT", 84, 61), ("SUN", 79, 58), ("MON", 71, 55)],
+    "nascar": {"live": False, "venue": "RICHMOND", "rows": [
+        {"label": "CUP", "when": "SAT 10:00", "net": "USA", "live": False},
+        {"label": "XFN", "when": "SAT 7:30", "net": "CW", "live": False},
+        {"label": "TRK", "when": "FRI 9:00", "net": "FS1", "live": False}]},
 }
 
 DEMO_CAL = {
@@ -273,6 +270,18 @@ SPRITES = {
 ...#.#.#...
 ..#.#.#.#..
 ...........""",
+"NASCAR": """
+...........
+.##..##..##
+.##..##..##
+##..##..##.
+##..##..##.
+.##..##..##
+.##..##..##
+##..##..##.
+##..##..##.
+...........
+...........""",
 "STORMS": """
 ...........
 ....###....
@@ -303,7 +312,7 @@ BAR_H = 16
 LABEL_Y = 58
 
 MARQUEE_STEP = 0.22      # seconds between frames while a title scrolls
-MARQUEE_PX = 3           # pixels per frame
+MARQUEE_PX = 2           # pixels per frame
 MARQUEE_MAX = 34         # seconds; cap so one long title can't own the board
 MARQUEE_X0, MARQUEE_X1 = 1, 63
 SCRIM_TOP = 57           # poster shows above this; text row below
@@ -368,27 +377,13 @@ def cal_bar(cal):
     return LOAM, SLATE, "NEXT UP"
 
 
-def clock_str(now=None):
-    now = now or dt.datetime.now()
-    h = now.hour % 12 or 12
-    return f"{h}:{now.minute:02d}"
-
-
-def draw_footer(d, label):
-    """Bottom row: clock hard left, context hard right. The clock is the same
-    on every screen, so it reads as chrome rather than data. If the label
-    won't fit alongside it, the label gets trimmed — the time always wins."""
-    t = clock_str()
-    draw_text(d, t, 2, LABEL_Y, SLATE, 1)
-
-    avail = 62 - (2 + text_width(t, 1) + 4)
-    if text_width(label, 1) > avail and " " in label:
-        while label and text_width(label, 1) > avail:   # shed whole words first
-            label = label[:label.rfind(" ")] if " " in label else ""
-    while label and text_width(label, 1) > avail:
-        label = label[:-1].rstrip(" ,.")
-    if label:
-        draw_text(d, label, 62 - text_width(label, 1), LABEL_Y, SLATE, 1)
+def draw_footer(img, label, phase=0, color=SLATE):
+    """Bottom row: whatever context the screen wants, centred. No clock —
+    there are three of those in this room already. Long labels scroll rather
+    than getting trimmed, so nothing is silently lost."""
+    if not label:
+        return
+    _marquee(img, label, LABEL_Y, color, 1, phase)
 
 
 def stack(d, title, sub, big, label, big_color=DUST, title_scale_max=2):
@@ -405,57 +400,12 @@ def stack(d, title, sub, big, label, big_color=DUST, title_scale_max=2):
     top, bottom = y + 2, LABEL_Y - 2
     draw_centered(d, big, top + (bottom - top - text_height(sc)) // 2, big_color, sc)
 
-    draw_footer(d, label)
+    draw_footer(img, label, phase)
 
 
 def canvas():
     img = Image.new("RGB", (64, 64), LOAM)
     return img, ImageDraw.Draw(img)
-
-
-# ---------------------------------------------------------------- project screens
-
-BR_COL_W = 24        # usable width per column, keeps digits off the divider
-
-
-def br_canvas():
-    img = Image.new("RGB", (64, 64), BR_NAVY)
-    return img, ImageDraw.Draw(img)
-
-
-def br_bar(d, color, word):
-    d.rectangle([0, 0, 63, BAR_H], fill=color)
-    sc = min(BAR_SCALE, fit_scale(word, BAR_SCALE))
-    draw_centered(d, word, (BAR_H - text_height(sc)) // 2 + 1, BR_NAVY, sc)
-
-
-def br_pair(d, left, right):
-    """Two labelled numbers either side of a rule. Both take the same scale so
-    they read as a pair rather than one long number."""
-    d.line([32, 20, 32, 55], fill=BR_LINE)
-
-    def fits(v):
-        for sc in range(4, 0, -1):
-            if text_width(v, sc) <= BR_COL_W:
-                return sc
-        return 1
-
-    vals = [str(left[1]), str(right[1])]
-    nsc = min(fits(v) for v in vals)
-    y = 28 + (20 - text_height(nsc)) // 2
-    for (label, _), val, cx in zip((left, right), vals, (16, 48)):
-        draw_text(d, label, cx - text_width(label, 1) // 2, 21, BR_MUTED, 1)
-        draw_text(d, val, cx - text_width(val, nsc) // 2, y, BR_CREAM, nsc)
-
-
-def br_footer(d, label):
-    t = clock_str()
-    draw_text(d, t, 2, LABEL_Y, BR_MUTED, 1)
-    avail = 62 - (2 + text_width(t, 1) + 4)
-    while label and text_width(label, 1) > avail:
-        label = label[:label.rfind(" ")] if " " in label else label[:-1]
-    if label:
-        draw_text(d, label, 62 - text_width(label, 1), LABEL_Y, BR_MUTED, 1)
 
 
 # ---------------------------------------------------------------- screens
@@ -512,7 +462,7 @@ def screen_flag(dirt, bath, wx, cal, phase=0):
             draw_text(d, p, 62 - text_width(p, 1), y + 3,
                       DUST if (live or hot) else SLATE, 1)
 
-    draw_footer(d, dirt["label"])
+    draw_footer(img, dirt["label"], phase)
     return img
 
 
@@ -539,7 +489,7 @@ def screen_weather(dirt, bath, wx, cal, phase=0):
         t = f"{hi}/{lo}"
         draw_text(d, t, cx - text_width(t, 1) // 2, 51, DUST, 1)
 
-    draw_footer(d, f"{wx['rain']}% {wx['wind']}MPH")
+    draw_footer(img, f"{wx['rain']}% RAIN  {wx['wind']} MPH", phase)
     return img
 
 
@@ -574,15 +524,34 @@ def marquee_span(text, scale=1):
     return text_width(text, scale) + 6 * scale
 
 
-def needs_marquee(bath):
-    return text_width(jf_line(bath), 1) > (MARQUEE_X1 - MARQUEE_X0)
+def scrolling_text(name, dirt, bath, wx):
+    """What each screen would scroll, and at what scale and window width.
+    Returns None when a screen has nothing that could overflow."""
+    if name == "jellyfin":
+        return jf_line(bath), 1, MARQUEE_X1 - MARQUEE_X0
+    if name == "nascar":
+        nc = wx.get("nascar") or {}
+        return nc.get("venue", ""), BAR_SCALE, 62 - (2 + SPRITE_W + 3)
+    if name == "weather":
+        return f"{wx['rain']}% RAIN  {wx['wind']} MPH", 1, MARQUEE_X1 - MARQUEE_X0
+    if name == "flag":
+        return dirt.get("label", ""), 1, MARQUEE_X1 - MARQUEE_X0
+    return None
 
 
-def marquee_seconds(bath, floor):
+def needs_marquee(name, dirt, bath, wx):
+    got = scrolling_text(name, dirt, bath, wx)
+    if not got:
+        return False
+    text, scale, window = got
+    return text_width(text, scale) > window
+
+
+def marquee_seconds(text, scale, floor):
     """Run for one whole cycle where it fits in a sane dwell, so you see the
     title rather than a third of it. Capped, or a very long name would hold
     the board hostage."""
-    cycle = marquee_span(jf_line(bath)) / (MARQUEE_PX / MARQUEE_STEP)
+    cycle = marquee_span(text, scale) / (MARQUEE_PX / MARQUEE_STEP)
     return min(max(cycle, floor), MARQUEE_MAX)
 
 
@@ -623,10 +592,58 @@ def screen_jellyfin(dirt, bath, wx, cal, phase=0):
     return img
 
 
+def screen_nascar(dirt, bath, wx, cal, phase=0):
+    """All three national series as rows: when the next race is and what
+    channel. Same row grammar as the dirt tracks, so the eye already knows
+    how to read it."""
+    nc = wx.get("nascar") or {}
+    rows = nc.get("rows") or []
+    img, d = canvas()
+
+    if not rows:
+        draw_bar(d, LOAM, "NASCAR", SLATE, rule=True)
+        draw_centered(d, "NO DATA", 32, SLATE, 1)
+        return img
+
+    # bar carries the weekend's track, or LIVE when anything is running
+    if nc.get("live"):
+        d.rectangle([0, 0, 63, BAR_H], fill=GREEN)
+        word, ink = "LIVE", LOAM
+    else:
+        d.rectangle([0, 0, 63, BAR_H], fill=SODIUM)
+        word, ink = nc.get("venue") or "NASCAR", LOAM
+    # Sprite stays put; the track name scrolls in the space beside it rather
+    # than shrinking to illegibility or getting clipped.
+    draw_sprite(d, "NASCAR", 2, 3, ink)
+    _marquee(img, word, 4, ink, BAR_SCALE, phase,
+             x0=2 + SPRITE_W + 3, x1=62)
+    d = ImageDraw.Draw(img)
+
+    # one row per series: label left, network right, time filling the middle
+    y = 22
+    for r in rows[:3]:
+        live = r.get("live")
+        draw_text(d, r["label"], 1, y, DUST if live else SLATE, 1)
+
+        net = r.get("net", "")
+        if net:
+            draw_text(d, net, 63 - text_width(net, 1), y, SODIUM, 1)
+
+        when = r.get("when", "")
+        lx = 1 + text_width(r["label"], 1) + 2
+        rx = 63 - (text_width(net, 1) + 2 if net else 0)
+        draw_text(d, when, lx + max(0, (rx - lx - text_width(when, 1)) // 2),
+                  y, GREEN if live else DUST, 1)
+        y += 12
+
+    return img
+
+
 SCREENS = {
     "flag": screen_flag,
     "weather": screen_weather,
     "jellyfin": screen_jellyfin,
+    "nascar": screen_nascar,
 }
 
 
@@ -648,10 +665,10 @@ def rotation(now=None):
     tracks; mornings lead with the sky; otherwise it spreads evenly."""
     now = now or dt.datetime.now()
     if is_race_night(now):
-        return [("flag", 30), ("weather", 10), ("jellyfin", 16)]
+        return [("flag", 30), ("weather", 10), ("nascar", 8), ("jellyfin", 16)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 18), ("flag", 12), ("jellyfin", 16)]
-    return [("flag", 14), ("weather", 14), ("jellyfin", 18)]
+        return [("weather", 18), ("flag", 12), ("nascar", 10), ("jellyfin", 16)]
+    return [("flag", 14), ("weather", 14), ("nascar", 12), ("jellyfin", 18)]
 
 
 # ---------------------------------------------------------------- data
@@ -679,6 +696,7 @@ def fetch():
     ev_doc = _get(f"{DIRTCHECK_BASE}/events.json", None, "dirtcheck events")
     st_doc = _get(f"{DIRTCHECK_BASE}/status.json", None, "dirtcheck status")
     raw_w = _get(WEATHER_URL, None, "weather")
+    raw_n = fetch_nascar()
 
     if ev_doc and st_doc:
         import dirtcheck
@@ -707,6 +725,10 @@ def fetch():
     else:
         wx = DEMO_WX
 
+    if raw_n:
+        import nascar as _nascar
+        wx["nascar"] = _nascar.build(raw_n)
+
     return dirt, bath, wx, {}
 
 
@@ -723,6 +745,18 @@ def fetch_jellyfin():
     jf["art"] = (jellyfin.poster(JELLYFIN_URL, JELLYFIN_KEY, jf["art_id"])
                  if jf.get("art_id") else None)
     return jf
+
+
+def fetch_nascar():
+    """One call per series. A series that fails is simply left out rather
+    than failing the whole screen."""
+    import nascar
+    docs = {}
+    for _, slug, _f in nascar.SERIES:
+        doc = _get(nascar.url(slug), None, f"nascar {slug}")
+        if doc:
+            docs[slug] = doc
+    return docs or None
 
 
 def _day_name(iso):
@@ -780,7 +814,7 @@ def main():
             SCREENS["flag"](dd, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
-        for name in ("weather", "jellyfin"):
+        for name in ("weather", "nascar", "jellyfin"):
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
@@ -816,9 +850,11 @@ def main():
 
                 # A long title has to move to be read, which means pushing
                 # frames instead of one still. Only when it doesn't fit.
-                if name == "jellyfin" and needs_marquee(bath):
+                if needs_marquee(name, dirt, bath, wx):
+                    text, scale, _w = scrolling_text(name, dirt, bath, wx)
                     dev.set_brightness(brightness_now())
-                    steps = int(marquee_seconds(bath, dwell) / MARQUEE_STEP)
+                    steps = int(marquee_seconds(text, scale, dwell)
+                                / MARQUEE_STEP)
                     for i in range(steps):
                         dev.push_image(SCREENS[name](dirt, bath, wx, cal,
                                                      phase=i * MARQUEE_PX))

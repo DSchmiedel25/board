@@ -1,0 +1,8 @@
+local_config.py
+
+.venv/
+__pycache__/
+*.pyc
+*.log
+www/
+*.zip

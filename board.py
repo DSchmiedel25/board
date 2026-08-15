@@ -1125,14 +1125,14 @@ def keep_podium(nc):
     — which is also what makes it survive a restart.
     """
     path = os.path.join(DATA_DIR, PODIUM_FILE)
-    pod = (nc or {}).get("podium")
+    pod, fld = (nc or {}).get("podium"), (nc or {}).get("field")
 
     # only results get saved — a starting grid is stale within hours
     if pod and pod.get("kind") == "result":
         try:
             os.makedirs(DATA_DIR, exist_ok=True)
             with open(path, "w") as f:
-                json.dump(pod, f)
+                json.dump({"podium": pod, "field": fld}, f)
         except OSError:
             pass
         return nc
@@ -1142,7 +1142,9 @@ def keep_podium(nc):
 
     try:
         with open(path) as f:
-            nc["podium"] = json.load(f)
+            saved = json.load(f)
+        nc["podium"] = saved.get("podium")
+        nc["field"] = saved.get("field")
     except (OSError, ValueError):
         pass
     return nc

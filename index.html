@@ -225,19 +225,32 @@ body.no-media #media{display:none}
            text-align:center;min-width:3.4em;flex:none}
 .srow.live .time{color:var(--green);font-weight:800}
 .podium{flex:1;border-left:1px solid var(--rail);padding-left:var(--gap);
-        display:flex;flex-direction:column;gap:.4em;min-width:0}
-.pod{display:flex;align-items:center;gap:.7em}
-.pod .pos{width:1.7em;height:1.7em;border-radius:.35em;flex:none;display:grid;
-          place-items:center;font-weight:900;color:#1a1509;font-size:.8em}
-.podium.result .pod:nth-child(2) .pos{background:#ffd65c}
-.podium.result .pod:nth-child(3) .pos{background:#c6ced8}
-.podium.result .pod:nth-child(4) .pos{background:#c68448}
-/* A starting grid gets neutral chips — gold for a pole position would read
-   as a win that hasn't happened. */
-.podium.lineup .pod .pos{background:var(--rail);color:var(--dust)}
-.pod .who{font-size:28px;font-weight:700;white-space:nowrap;
-          text-transform:uppercase;letter-spacing:.03em;
-          overflow:hidden;text-overflow:ellipsis}
+        display:flex;flex-direction:column;gap:.5em;min-width:0}
+
+/* The whole field rather than a top three. The list is duplicated once and
+   translated by exactly half its height, so the loop is seamless — a scroll
+   that snapped back to the top would read as a glitch from across a room. */
+.fieldbox{position:relative;flex:1;min-height:0;overflow:hidden;
+  -webkit-mask-image:linear-gradient(#0000,#000 8%,#000 88%,#0000 100%);
+          mask-image:linear-gradient(#0000,#000 8%,#000 88%,#0000 100%)}
+.fieldroll{position:absolute;top:0;left:0;right:0;
+           animation:roll linear infinite}
+@keyframes roll{to{transform:translateY(-50%)}}
+.frow{display:grid;grid-template-columns:40px 56px 1fr;align-items:baseline;
+      gap:0 .7em;padding:.17em 0}
+.frow .pos{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+           font-size:17px;color:var(--slate);text-align:right}
+.frow .car{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+           font-size:17px;color:var(--sodium)}
+.frow .dvr{font-size:22px;font-weight:700;letter-spacing:.03em;
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Podium colours only where a finish has actually happened */
+.podium.result .frow:nth-child(1) .pos,
+.podium.result .frow:nth-child(1) .dvr{color:#ffd65c}
+.podium.result .frow:nth-child(2) .pos,
+.podium.result .frow:nth-child(2) .dvr{color:#dfe4ea}
+.podium.result .frow:nth-child(3) .pos,
+.podium.result .frow:nth-child(3) .dvr{color:#d99a5c}
 
 /* -------------------------------------------------------------- media */
 #media{grid-area:media;position:relative;overflow:hidden}
@@ -483,6 +496,14 @@ function renderWeather(wx){
     </div>`;
 }
 
+function fieldRows(fl){
+  return fl.rows.map(r=>`<div class="frow">
+      <span class="pos">${r[0]}</span>
+      <span class="car">${r[2] ? "#" + r[2] : ""}</span>
+      <span class="dvr">${r[1]}</span>
+    </div>`).join("");
+}
+
 function renderNascar(nc){
   const body = $("#ncBody");
   if (!nc || !(nc.rows||[]).length){
@@ -508,12 +529,23 @@ function renderNascar(nc){
       </span>
       <span class="net">${r.net||""}</span>
     </div>`;}).join("");
-  const pod = nc.podium ? `<div class="podium ${nc.podium.kind||"result"}">
-      <div class="eyebrow">${nc.podium.label || "Last race"} &middot; ${nc.podium.venue}</div>
-      ${nc.podium.top.map(t=>`<div class="pod">
-        <span class="pos">${t[0]}</span><span class="who">${t[1]}</span></div>`).join("")}
+  const fl = nc.field;
+  const pod = fl ? `<div class="podium ${fl.kind||"result"}">
+      <div class="eyebrow">${fl.label || "Field"} &middot; ${fl.venue}</div>
+      <div class="fieldbox"><div class="fieldroll" id="fieldRoll">
+        ${fieldRows(fl)}${fieldRows(fl)}
+      </div></div>
     </div>` : "";
   body.innerHTML = `<div class="series">${series}</div>${pod}`;
+
+  const roll = $("#fieldRoll");
+  if (roll){
+    // ~26px per second regardless of how many cars took the green
+    requestAnimationFrame(() => {
+      const secs = (roll.scrollHeight / 2) / 26;
+      roll.style.animationDuration = Math.max(12, secs) + "s";
+    });
+  }
 }
 
 function renderMedia(jf){

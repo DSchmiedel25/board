@@ -186,6 +186,51 @@ def podium(doc):
     }
 
 
+def field(doc, limit=40):
+    """The whole running order, not just the top three.
+
+    Same source as podium(): before the green flag this is the starting grid,
+    after it the finishing order. Car numbers come along when ESPN supplies
+    them, since half of following a race is knowing the numbers.
+    """
+    ev = (doc.get("events") or [{}])[0]
+    comp = (ev.get("competitions") or [{}])[0]
+    state = ((ev.get("status") or {}).get("type") or {}).get("state", "")
+    if state not in ("post", "pre", "in"):
+        return None
+
+    entries = sorted([c for c in comp.get("competitors") or [] if c.get("order")],
+                     key=lambda c: c["order"])[:limit]
+    if not entries:
+        return None
+
+    where = str(ev.get("name") or "")
+    if " at " in where:
+        where = where.split(" at ")[-1]
+
+    rows = []
+    for c in entries:
+        ath = c.get("athlete") or {}
+        name = str(ath.get("shortName") or ath.get("fullName") or "")
+        num = ""
+        for k in ("vehicle", "vehicles"):
+            v = c.get(k)
+            if isinstance(v, list) and v:
+                v = v[0]
+            if isinstance(v, dict):
+                num = str(v.get("number") or v.get("displayName") or "")
+                break
+        rows.append([str(c["order"]), name.split(". ")[-1].upper(), num])
+
+    return {
+        "venue": short(where),
+        "kind": "result" if state == "post" else "lineup",
+        "label": {"post": "Finish", "pre": "Starting lineup",
+                  "in": "Running order"}[state],
+        "rows": rows,
+    }
+
+
 def build(docs, now=None, get=None):
     """docs: {slug: parsed json}. Missing or broken slugs are skipped."""
     now = now or dt.datetime.now().astimezone()
@@ -211,4 +256,5 @@ def build(docs, now=None, get=None):
     cup = (docs or {}).get("nascar-premier")
     return {"rows": rows, "venue": short(venue),
             "live": any(r.get("live") for r in rows),
-            "podium": podium(cup) if cup else None}
+            "podium": podium(cup) if cup else None,   # top three, for the Pixoo
+            "field": field(cup) if cup else None}     # whole grid, for the wall

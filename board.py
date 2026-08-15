@@ -1012,9 +1012,12 @@ def snapshot(dirt, bath, wx, path=None):
             doc["jellyfin"]["poster"] = "data/poster.jpg"
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
-            json.dump(doc, f)
+            # default=str so an un-serialisable value degrades to a string
+            # instead of raising. The wall page is a convenience; it must
+            # never be able to stop the Pixoo.
+            json.dump(doc, f, default=str)
         os.replace(tmp, path)              # atomic, so the page never reads half
-    except OSError as e:
+    except Exception as e:
         print(f"snapshot failed ({e})", file=sys.stderr)
     return doc
 

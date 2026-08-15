@@ -173,6 +173,12 @@ def build(docs, now=None):
     dated = [r for r in rows if r.get("at")]
     venue = min(dated, key=lambda r: r["at"])["venue"] if dated else ""
 
+    # "at" is a datetime used only for that comparison. It must not survive
+    # into the return value — the caller serialises this to JSON for the wall
+    # page, and a datetime there takes the whole board down.
+    for r in rows:
+        r.pop("at", None)
+
     cup = (docs or {}).get("nascar-premier")
     return {"rows": rows, "venue": short(venue),
             "live": any(r.get("live") for r in rows),

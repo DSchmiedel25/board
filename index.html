@@ -548,56 +548,72 @@ function project(lat, lng, z){
 }
 
 let radarFrames = [], radarHost = "", radarPos = 0, radarBuilt = "";
+let geo = null;                     // tile window, shared by both layers
 
-function buildRadar(){
+function tileWindow(){
   const box = $("#radar");
   const w = box.clientWidth, h = box.clientHeight;
-  if (!w || !h) return;
-
-  const vw = w / RS, vh = h / RS;                 // virtual, pre-scale
+  if (!w || !h) return null;
+  const vw = w / RS, vh = h / RS;
   const [cx, cy] = project(HOME[0], HOME[1], RZ);
-  const originX = cx - vw/2, originY = cy - vh/2;
-  const x0 = Math.floor(originX / TILE), x1 = Math.floor((originX + vw) / TILE);
-  const y0 = Math.floor(originY / TILE), y1 = Math.floor((originY + vh) / TILE);
+  const ox = cx - vw/2, oy = cy - vh/2;
+  return {
+    ox, oy,
+    x0: Math.floor(ox / TILE), x1: Math.floor((ox + vw) / TILE),
+    y0: Math.floor(oy / TILE), y1: Math.floor((oy + vh) / TILE),
+  };
+}
 
-  const base = $("#radarBase"); base.innerHTML = "";
+function place(img, x, y, g){
+  img.style.left = (x*TILE - g.ox) + "px";
+  img.style.top  = (y*TILE - g.oy) + "px";
+  img.width = TILE; img.height = TILE;
+}
+
+/* The map stands on its own. It used to be built inside the radar routine,
+   which meant a failed RainViewer fetch took the basemap and the track pins
+   down with it — the panel just went black. */
+function buildBase(){
+  geo = tileWindow();
+  if (!geo) return false;
+
+  const base = $("#radarBase");
+  base.innerHTML = "";
   base.style.transform = "scale(" + RS + ")";
-  for (let x = x0; x <= x1; x++)
-    for (let y = y0; y <= y1; y++){
+  for (let x = geo.x0; x <= geo.x1; x++)
+    for (let y = geo.y0; y <= geo.y1; y++){
       const img = new Image();
       img.src = `https://basemaps.cartocdn.com/dark_all/${RZ}/${x}/${y}.png`;
-      img.style.left = (x*TILE - originX) + "px";
-      img.style.top  = (y*TILE - originY) + "px";
-      img.width = TILE; img.height = TILE;
+      place(img, x, y, geo);
       base.appendChild(img);
     }
 
-  // Pins are positioned in real pixels so the labels keep their own size
   const pins = $("#radarPins"); pins.innerHTML = "";
   TRACKS.forEach(([name, lat, lng, ink]) => {
     const [px, py] = project(lat, lng, RZ);
     const el = document.createElement("div");
     el.className = "pin";
-    el.style.left = ((px - originX) * RS) + "px";
-    el.style.top  = ((py - originY) * RS) + "px";
+    el.style.left = ((px - geo.ox) * RS) + "px";
+    el.style.top  = ((py - geo.oy) * RS) + "px";
     el.style.background = ink;
     el.innerHTML = `<b style="color:${ink}">${name.split("-")[0]}</b>`;
     pins.appendChild(el);
   });
+  return true;
+}
 
-  // one image per frame, all preloaded, shown by toggling opacity — swapping
-  // src instead would flash white on every step
-  const echo = $("#radarEcho"); echo.innerHTML = "";
+function buildEcho(){
+  if (!geo && !buildBase()) return;
+  const echo = $("#radarEcho");
+  echo.innerHTML = "";
   echo.style.transform = "scale(" + RS + ")";
   radarFrames.forEach((f, i) => {
-    for (let x = x0; x <= x1; x++)
-      for (let y = y0; y <= y1; y++){
+    for (let x = geo.x0; x <= geo.x1; x++)
+      for (let y = geo.y0; y <= geo.y1; y++){
         const img = new Image();
         img.src = `${radarHost}${f.path}/${TILE}/${RZ}/${x}/${y}/4/1_1.png`;
         img.dataset.frame = i;
-        img.style.left = (x*TILE - originX) + "px";
-        img.style.top  = (y*TILE - originY) + "px";
-        img.width = TILE; img.height = TILE;
+        place(img, x, y, geo);
         echo.appendChild(img);
       }
   });
@@ -632,12 +648,16 @@ const RADAR_HOLD = 5;                 // ticks to linger on the latest frame
 setInterval(stepRadar, 420);
 
 function renderRadar(r){
-  if (!r || !(r.frames||[]).length) return;
+  if (!geo) buildBase();                          // map first, always
+  if (!r || !(r.frames||[]).length){
+    $("#radarTime").textContent = "NO RADAR";
+    return;
+  }
   const sig = r.frames.map(f=>f.path).join("|");
   if (sig === radarBuilt) return;                 // same loop, nothing to do
   radarBuilt = sig;
   radarHost = r.host; radarFrames = r.frames;
-  buildRadar();
+  buildEcho();
 }
 
 /* Sky canvas: gradient plus whatever is falling. Same six skies as the
@@ -730,7 +750,7 @@ async function load(){
     $("#flagSub").textContent="No snapshot from the Pi";
   }
 }
-seedDrops(); paintSky(); load(); setInterval(load, POLL);
+seedDrops(); paintSky(); buildBase(); load(); setInterval(load, POLL);
 </script>
 </body>
 </html>

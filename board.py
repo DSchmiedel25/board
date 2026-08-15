@@ -565,7 +565,12 @@ def checker_flanks(d, word, phase, bar_color):
     tw = text_width(word, BAR_SCALE)
     x0 = (64 - tw) // 2
     dark = tuple(round(v * 0.45) for v in bar_color)
-    for span in (range(0, max(0, x0 - 3), 4), range(x0 + tw + 3, 64, 4)):
+
+    # Both flanks get the same width, snapped to the 4px checker grid. Left
+    # ran to x0-3 and right to the panel edge, which left 8px one side and 5
+    # the other — enough to make a centred word look shifted.
+    fw = max(0, ((x0 - 2) // 4) * 4)
+    for span in (range(0, fw, 4), range(64 - fw, 64, 4)):
         for x in span:
             for y in range(0, BAR_H + 1, 4):
                 on = ((x // 4) + (y // 4) + phase // 3) % 2 == 0

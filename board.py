@@ -302,6 +302,11 @@ def draw_sprite(d, key, x, y, color):
 BAR_H = 16
 LABEL_Y = 58
 
+MARQUEE_STEP = 0.22      # seconds between frames while a title scrolls
+MARQUEE_PX = 3           # pixels per frame
+MARQUEE_MAX = 34         # seconds; cap so one long title can't own the board
+MARQUEE_X0, MARQUEE_X1 = 1, 63
+
 # bar text is drawn at one fixed scale so it never jitters between screens
 BAR_SCALE = 2
 
@@ -454,7 +459,7 @@ def br_footer(d, label):
 
 # ---------------------------------------------------------------- screens
 
-def screen_flag(dirt, bath, wx, cal):
+def screen_flag(dirt, bath, wx, cal, phase=0):
     """All three tracks at once. The bar carries tonight's headline; the rows
     say what each track is doing, so a dark Fonda is as visible as a green
     Albany. When nothing is running, the soonest track is lit — three equally
@@ -510,7 +515,7 @@ def screen_flag(dirt, bath, wx, cal):
     return img
 
 
-def screen_weather(dirt, bath, wx, cal):
+def screen_weather(dirt, bath, wx, cal, phase=0):
     """Now on top, the next three days underneath. The big number is what it
     is outside right now; everything below is planning."""
     img, d = canvas()
@@ -537,49 +542,86 @@ def screen_weather(dirt, bath, wx, cal):
     return img
 
 
-def screen_jellyfin(dirt, bath, wx, cal):
-    """Poster art full-bleed, title and who's watching along the bottom. At
-    64x64 the art is more recognisable than any amount of text, so it gets
-    the whole panel and the type sits on a scrim over it.
+def _marquee(img, text, y, color, scale, phase,
+             x0=MARQUEE_X0, x1=MARQUEE_X1):
+    """Scroll long text through a window without spilling past its edges.
 
-    This screen is skipped entirely when nothing is playing — see the loop.
+    Drawn onto a crop of the panel rather than the panel itself, so the poster
+    behind it survives and the clipping is free.
+    """
+    win = x1 - x0
+    w = text_width(text, scale)
+    h = text_height(scale)
+
+    if w <= win:
+        draw_text(ImageDraw.Draw(img), text,
+                  x0 + (win - w) // 2, y, color, scale)
+        return
+
+    strip = img.crop((x0, y, x1, y + h))
+    sd = ImageDraw.Draw(strip)
+    gap = 6 * scale
+    span = w + gap
+    off = phase % span
+    draw_text(sd, text, -off, 0, color, scale)
+    draw_text(sd, text, -off + span, 0, color, scale)   # wrap seam
+    img.paste(strip, (x0, y))
+
+
+def marquee_span(text, scale=2):
+    """Pixels in one full loop, including the gap between repeats."""
+    return text_width(text, scale) + 6 * scale
+
+
+def needs_marquee(bath):
+    t = bath.get("title", "")
+    return text_width(t, 2) > (MARQUEE_X1 - MARQUEE_X0)
+
+
+def marquee_seconds(bath, floor):
+    """Run for one whole cycle where it fits in a sane dwell, so you see the
+    title rather than a third of it. Capped, or a very long name would hold
+    the board hostage."""
+    cycle = marquee_span(bath.get("title", "")) / (MARQUEE_PX / MARQUEE_STEP)
+    return min(max(cycle, floor), MARQUEE_MAX)
+
+
+def screen_jellyfin(dirt, bath, wx, cal, phase=0):
+    """Poster art gets the panel; everything written sits in a strip along the
+    bottom. No clock here — the other screens carry it, and this one is about
+    what's on.
     """
     jf = bath              # the jellyfin bag rides in the same slot
     img, d = canvas()
     art = jf.get("art")
 
+    STRIP = 44
     if art is not None:
         img.paste(art, (0, 0))
+        scrim = Image.new("RGB", (64, 64 - STRIP), LOAM)
+        img.paste(Image.blend(img.crop((0, STRIP, 64, 64)), scrim, 0.78),
+                  (0, STRIP))
         d = ImageDraw.Draw(img)
-        # darken the lower third so type survives a bright poster
-        scrim = Image.new("RGB", (64, 26), LOAM)
-        img.paste(Image.blend(img.crop((0, 38, 64, 64)), scrim, 0.74), (0, 38))
-        d = ImageDraw.Draw(img)
-        ty = 40
     else:
-        draw_bar(d, RAIL if jf["paused"] else SODIUM,
-                 "PAUSED" if jf["paused"] else "PLAYING",
-                 SLATE if jf["paused"] else LOAM)
-        ty = 26
+        d.rectangle([0, STRIP, 63, 63], fill=CLAY if False else LOAM)
+        draw_centered(d, "JELLYFIN", 20, SLATE, 2)
 
-    title = jf["title"]
-    tsc = fit_scale(title, 2)
-    draw_centered(d, title, ty, DUST, tsc)
+    _marquee(img, jf["title"], 45, DUST, 2, phase)
+    d = ImageDraw.Draw(img)
 
     who = jf.get("user", "")
     sub = jf.get("sub", "")
     line2 = f"{sub}  {who}".strip() if sub else who
-    draw_centered(d, line2, ty + text_height(tsc) + 2, SLATE, 1)
+    if jf.get("paused"):
+        line2 = f"{line2}  PAUSED".strip()
+    draw_centered(d, line2, 56, SLATE, 1)
 
-    # progress rule sits just above the footer
+    # progress runs along the very bottom edge, full width
     pct = jf.get("pct")
     if pct is not None:
-        d.line([2, 55, 61, 55], fill=RAIL)
-        d.line([2, 55, 2 + int(59 * pct / 100), 55],
-               fill=SLATE if jf["paused"] else SODIUM)
-
-    draw_footer(d, "PAUSED" if jf["paused"] else
-                (f"{pct}%" if pct is not None else ""))
+        d.line([0, 63, 63, 63], fill=RAIL)
+        d.line([0, 63, int(63 * pct / 100), 63],
+               fill=SLATE if jf.get("paused") else SODIUM)
     return img
 
 
@@ -608,10 +650,10 @@ def rotation(now=None):
     tracks; mornings lead with the sky; otherwise it spreads evenly."""
     now = now or dt.datetime.now()
     if is_race_night(now):
-        return [("flag", 30), ("weather", 10), ("jellyfin", 10)]
+        return [("flag", 30), ("weather", 10), ("jellyfin", 16)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 18), ("flag", 12), ("jellyfin", 10)]
-    return [("flag", 14), ("weather", 14), ("jellyfin", 14)]
+        return [("weather", 18), ("flag", 12), ("jellyfin", 16)]
+    return [("flag", 14), ("weather", 14), ("jellyfin", 18)]
 
 
 # ---------------------------------------------------------------- data
@@ -772,6 +814,17 @@ def main():
 
                 # nothing playing means no Jellyfin screen at all
                 if name == "jellyfin" and not bath.get("playing"):
+                    continue
+
+                # A long title has to move to be read, which means pushing
+                # frames instead of one still. Only when it doesn't fit.
+                if name == "jellyfin" and needs_marquee(bath):
+                    dev.set_brightness(brightness_now())
+                    steps = int(marquee_seconds(bath, dwell) / MARQUEE_STEP)
+                    for i in range(steps):
+                        dev.push_image(SCREENS[name](dirt, bath, wx, cal,
+                                                     phase=i * MARQUEE_PX))
+                        time.sleep(MARQUEE_STEP)
                     continue
 
                 push(dev, SCREENS[name](dirt, bath, wx, cal))

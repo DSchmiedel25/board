@@ -306,6 +306,7 @@ MARQUEE_STEP = 0.22      # seconds between frames while a title scrolls
 MARQUEE_PX = 3           # pixels per frame
 MARQUEE_MAX = 34         # seconds; cap so one long title can't own the board
 MARQUEE_X0, MARQUEE_X1 = 1, 63
+SCRIM_TOP = 57           # poster shows above this; text row below
 
 # bar text is drawn at one fixed scale so it never jitters between screens
 BAR_SCALE = 2
@@ -568,53 +569,50 @@ def _marquee(img, text, y, color, scale, phase,
     img.paste(strip, (x0, y))
 
 
-def marquee_span(text, scale=2):
+def marquee_span(text, scale=1):
     """Pixels in one full loop, including the gap between repeats."""
     return text_width(text, scale) + 6 * scale
 
 
 def needs_marquee(bath):
-    t = bath.get("title", "")
-    return text_width(t, 2) > (MARQUEE_X1 - MARQUEE_X0)
+    return text_width(jf_line(bath), 1) > (MARQUEE_X1 - MARQUEE_X0)
 
 
 def marquee_seconds(bath, floor):
     """Run for one whole cycle where it fits in a sane dwell, so you see the
     title rather than a third of it. Capped, or a very long name would hold
     the board hostage."""
-    cycle = marquee_span(bath.get("title", "")) / (MARQUEE_PX / MARQUEE_STEP)
+    cycle = marquee_span(jf_line(bath)) / (MARQUEE_PX / MARQUEE_STEP)
     return min(max(cycle, floor), MARQUEE_MAX)
 
 
+def jf_line(jf):
+    """Title, episode and watcher on one line — the same row the clock uses
+    on every other screen."""
+    return "  ".join(x for x in (jf.get("title", ""),
+                                 jf.get("sub", ""),
+                                 jf.get("user", "")) if x).upper()
+
+
 def screen_jellyfin(dirt, bath, wx, cal, phase=0):
-    """Poster art gets the panel; everything written sits in a strip along the
-    bottom. No clock here — the other screens carry it, and this one is about
-    what's on.
+    """Poster art gets everything above the footer row. The text sits exactly
+    where the clock sits on the other screens, on a thin scrim — an outline
+    instead reads as a black blob around each glyph at this size.
     """
     jf = bath              # the jellyfin bag rides in the same slot
     img, d = canvas()
     art = jf.get("art")
 
-    STRIP = 44
     if art is not None:
         img.paste(art, (0, 0))
-        scrim = Image.new("RGB", (64, 64 - STRIP), LOAM)
-        img.paste(Image.blend(img.crop((0, STRIP, 64, 64)), scrim, 0.78),
-                  (0, STRIP))
-        d = ImageDraw.Draw(img)
+        strip = Image.new("RGB", (64, 64 - SCRIM_TOP), LOAM)
+        img.paste(Image.blend(img.crop((0, SCRIM_TOP, 64, 64)), strip, 0.82),
+                  (0, SCRIM_TOP))
     else:
-        d.rectangle([0, STRIP, 63, 63], fill=CLAY if False else LOAM)
-        draw_centered(d, "JELLYFIN", 20, SLATE, 2)
+        draw_centered(d, "JELLYFIN", 26, SLATE, 2)
 
-    _marquee(img, jf["title"], 45, DUST, 2, phase)
+    _marquee(img, jf_line(jf), LABEL_Y, DUST, 1, phase)
     d = ImageDraw.Draw(img)
-
-    who = jf.get("user", "")
-    sub = jf.get("sub", "")
-    line2 = f"{sub}  {who}".strip() if sub else who
-    if jf.get("paused"):
-        line2 = f"{line2}  PAUSED".strip()
-    draw_centered(d, line2, 56, SLATE, 1)
 
     # progress runs along the very bottom edge, full width
     pct = jf.get("pct")

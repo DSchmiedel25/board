@@ -110,6 +110,34 @@ def one(doc, label, fallback, now):
     }
 
 
+def podium(doc):
+    """Top three from the most recent finished Cup race."""
+    ev = (doc.get("events") or [{}])[0]
+    comp = (ev.get("competitions") or [{}])[0]
+    state = ((ev.get("status") or {}).get("type") or {}).get("state", "")
+    if state != "post":
+        return None
+
+    finishers = sorted(
+        [c for c in comp.get("competitors") or [] if c.get("order")],
+        key=lambda c: c["order"])[:3]
+    if len(finishers) < 3:
+        return None
+
+    where = str(ev.get("name") or "")
+    if " at " in where:
+        where = where.split(" at ")[-1]
+
+    return {
+        "venue": short(where),
+        "top": [(str(c["order"]),
+                 str((c.get("athlete") or {}).get("shortName")
+                     or (c.get("athlete") or {}).get("fullName") or "")
+                 .split(". ")[-1].upper())
+                for c in finishers],
+    }
+
+
 def build(docs, now=None):
     """docs: {slug: parsed json}. Missing or broken slugs are skipped."""
     now = now or dt.datetime.now().astimezone()
@@ -126,5 +154,7 @@ def build(docs, now=None):
     dated = [r for r in rows if r.get("at")]
     venue = min(dated, key=lambda r: r["at"])["venue"] if dated else ""
 
+    cup = (docs or {}).get("nascar-premier")
     return {"rows": rows, "venue": short(venue),
-            "live": any(r.get("live") for r in rows)}
+            "live": any(r.get("live") for r in rows),
+            "podium": podium(cup) if cup else None}

@@ -21,6 +21,8 @@ most of the dwell time; the rest of the week it's mostly BathroomReport.
 
 import argparse
 import datetime as dt
+import math
+import random
 import json
 import os
 import sys
@@ -84,7 +86,9 @@ DEMO_WX = {
     "temp": 68, "feels": 66, "high": 84, "low": 61,
     "code": 1, "wind": 7, "rain": 20,
     "days": [("SAT", 84, 61), ("SUN", 79, 58), ("MON", 71, 55)],
-    "nascar": {"live": False, "venue": "RICHMOND", "rows": [
+    "nascar": {"live": False, "venue": "RICHMOND",
+        "podium": {"venue": "IOWA", "top": [("1","GIBBS"),("2","BELL"),("3","BLANEY")]},
+        "rows": [
         {"label": "CUP", "when": "SAT 10:00", "net": "USA", "live": False},
         {"label": "XFN", "when": "SAT 7:30", "net": "CW", "live": False},
         {"label": "TRK", "when": "FRI 9:00", "net": "FS1", "live": False}]},
@@ -361,12 +365,15 @@ def wx_bar(wx):
     """Same question as every other bar: is something happening. Here that's
     whether the sky is about to interfere with anything."""
     word = wx_word(wx["code"])
-    wet = wx["code"] >= 51
-    if wet:
-        return RED, DUST, word
-    if wx["rain"] >= 50:
-        return YELLOW, LOAM, word
-    return GREEN, LOAM, word
+    kind = sky_name(wx["code"])
+    return {
+        "clear":  ((250, 196, 64),  (28, 22, 16)),
+        "cloudy": ((136, 146, 162), (22, 24, 30)),
+        "rain":   ((92, 130, 178),  (240, 248, 255)),
+        "snow":   ((176, 196, 220), (24, 30, 42)),
+        "storms": ((250, 196, 64),  (28, 22, 16)),
+        "night":  ((62, 52, 100),   (238, 234, 255)),
+    }[kind] + (word,)
 
 
 def cal_bar(cal):
@@ -409,110 +416,172 @@ def stale_note(status):
     return "" if status == "OK" else status
 
 
-# ---------------------------------------------------------------- screens
+# ------------------------------------------------------------ atmosphere
 
-def screen_flag(dirt, bath, wx, cal, phase=0):
-    """All three tracks at once. The bar carries tonight's headline; the rows
-    say what each track is doing, so a dark Fonda is as visible as a green
-    Albany. When nothing is running, the soonest track is lit — three equally
-    dim rows make you read all of them to find the one that matters."""
-    img, d = canvas()
+# Each track keeps the same colour everywhere, so you find yours by colour
+# before you read the letters.
+TRACK_INK = {"AS": (86, 198, 255), "LV": (255, 122, 92), "FON": (168, 230, 110)}
 
-    status = dirt.get("status", "OK")
-    if status in ("OFFLINE", "UNKNOWN") or not dirt.get("rows"):
-        return draw_unavailable(img, d, "DIRTCHECK", status)
+# Sky behind the weather screen. The background says the weather before any
+# text does.
+SKIES = {
+    "clear":  ((32, 74, 132), (108, 152, 196)),
+    "cloudy": ((66, 74, 88),  (132, 140, 156)),
+    "rain":   ((22, 34, 52),  (66, 84, 106)),
+    "snow":   ((48, 56, 76),  (104, 114, 136)),
+    "storms": ((28, 28, 44),  (72, 68, 100)),
+    "night":  ((8, 10, 34),   (48, 36, 76)),
+}
 
-    bar_color, bar_text, word = STATES.get(dirt["state"], STATES["standby"])
-
-    # Stale data keeps its content but loses its colour. Green is a claim
-    # about right now; an hour-old fetch has no business making it.
-    if status == "STALE":
-        bar_color, bar_text = RAIL, DUST
-
-    standby = dirt["state"] == "standby"
-    if standby:
-        draw_bar(d, SODIUM, "DIRT CHK", LOAM)
-    else:
-        draw_bar(d, bar_color, word, bar_text)
-
-    rows = dirt.get("rows") or []
-    ROW_H, y0 = 12, BAR_H + 4
-
-    def risk_chip(r):
-        """The chip is rain risk, not race state — that way it carries
-        information every day of the week rather than only on race nights.
-        'Is it happening now' is answered by NOW in the day column and by the
-        bar going green."""
-        if r["state"] == "rained":
-            return RED
-        p = r["prob"]
-        if p is None:
-            return RAIL
-        if p >= 60:
-            return RED
-        if p >= 30:
-            return YELLOW
-        return GREEN
-
-    # on a standby screen the first row is the next race, so highlight it
-    lit = 0 if standby and rows else -1
-
-    for i, r in enumerate(rows[:3]):
-        y = y0 + i * ROW_H
-        live = r["state"] != "dark"
-        hot = (i == lit)
-
-        d.rectangle([0, y, 2, y + ROW_H - 3],
-                    fill=RAIL if status == "STALE" else risk_chip(r))
-        draw_text(d, r["code"], 6, y + 1, DUST if (live or hot) else SLATE, 2)
-
-        # two fixed columns so a 3-char code and a 3-char day never collide
-        draw_text(d, r["when"], 34, y + 3,
-                  SODIUM if (live or hot) else SLATE, 1)
-        if r["prob"] is not None:
-            p = f"{r['prob']}%"
-            draw_text(d, p, 62 - text_width(p, 1), y + 3,
-                      DUST if (live or hot) else SLATE, 1)
-
-    note = stale_note(status)
-    draw_footer(img, f"{dirt['label']}  {note}".strip() if note
-                else dirt["label"], phase, SODIUM if note else SLATE)
-    return img
+TEMP_STOPS = [(10, (120, 170, 255)), (32, (150, 205, 255)), (55, (190, 235, 215)),
+              (72, (255, 232, 150)), (88, (255, 158, 80)), (100, (255, 92, 72))]
 
 
-def screen_weather(dirt, bath, wx, cal, phase=0):
-    """Now on top, the next three days underneath. The big number is what it
-    is outside right now; everything below is planning."""
-    img, d = canvas()
+def temp_ink(f):
+    """Cold reads blue, hot reads red. The number carries its own meaning
+    before you've focused on the digits."""
+    try:
+        f = float(f)
+    except (TypeError, ValueError):
+        return DUST
+    if f <= TEMP_STOPS[0][0]:
+        return TEMP_STOPS[0][1]
+    for (a, ca), (b, cb) in zip(TEMP_STOPS, TEMP_STOPS[1:]):
+        if f <= b:
+            t = (f - a) / (b - a)
+            return tuple(round(x + (y - x) * t) for x, y in zip(ca, cb))
+    return TEMP_STOPS[-1][1]
 
-    status = wx.get("status", "OK")
-    if status in ("OFFLINE", "UNKNOWN") or "temp" not in wx:
-        return draw_unavailable(img, d, "WEATHER", status)
 
-    c, tc, word = wx_bar(wx)
+def sky(name):
+    top, bot = SKIES.get(name, SKIES["clear"])
+    img = Image.new("RGB", (64, 64))
+    d = ImageDraw.Draw(img)
+    for y in range(64):
+        t = y / 63
+        d.line([0, y, 63, y],
+               fill=tuple(round(a + (b - a) * t) for a, b in zip(top, bot)))
+    return img, d
 
-    # sprite and word travel together as one centred group
-    d.rectangle([0, 0, 63, BAR_H], fill=c)
+
+def sky_name(code, hour=None):
+    """Open-Meteo weather code -> which sky. Night wins over clear, because a
+    blue noon sky at 11pm looks broken."""
+    hour = dt.datetime.now().hour if hour is None else hour
+    dark = hour >= NIGHT_START or hour < NIGHT_END
+    if code in (95, 96, 99):
+        return "storms"
+    if code in (71, 73, 75, 77, 85, 86):
+        return "snow"
+    if code in (51, 53, 55, 61, 63, 65, 80, 81, 82):
+        return "rain"
+    if dark:
+        return "night"
+    if code in (2, 3, 45, 48):
+        return "cloudy"
+    return "clear"
+
+
+def precip(d, kind, phase, seed=7):
+    """Falling weather. Drops at three speeds so it reads as depth rather
+    than a marching grid."""
+    rnd = random.Random(seed)
+    if kind in ("rain", "storm"):
+        heavy = kind == "storm"
+        count = 46 if heavy else 24
+        speeds = (4, 5, 7) if heavy else (2, 3, 4)
+        length = 4 if heavy else 2
+        ink = (176, 206, 245) if heavy else (150, 190, 235)
+        for _ in range(count):
+            x, y0, sp = rnd.randrange(64), rnd.randrange(64), rnd.choice(speeds)
+            y = (y0 + phase * sp) % 84 - 10
+            if y > BAR_H:
+                # storm rain slants, which sells wind without drawing any
+                dx = 1 if heavy else 0
+                d.line([x, y, x + dx, y + length], fill=ink)
+    elif kind == "snow":
+        for _ in range(28):
+            x0, y0, sp = rnd.randrange(64), rnd.randrange(64), rnd.choice((1, 2))
+            y = (y0 + phase * sp) % 78 - 8
+            x = (x0 + math.sin((y + x0) / 7) * 2) % 64
+            if y > BAR_H:
+                d.point((x, y), fill=(255, 255, 255))
+    elif kind == "night":
+        for _ in range(20):
+            x, y = rnd.randrange(64), rnd.randrange(BAR_H + 2, 62)
+            tw = (math.sin((phase + x * 7) / 6) + 1) / 2
+            v = round(110 + 130 * tw)
+            d.point((x, y), fill=(v, v, 255))
+
+
+STRIKE_EVERY = 17          # frames between strikes
+STRIKE_FRAMES = 3          # how long a bolt stays lit
+
+
+def bolt_path(rnd, x, top, bottom):
+    """A jagged descent. Each segment steps down and jinks sideways, which is
+    what makes it read as lightning rather than a scribble."""
+    pts, y = [(x, top)], top
+    while y < bottom:
+        y += rnd.randint(4, 8)
+        x += rnd.choice((-5, -4, -3, 3, 4, 5))
+        pts.append((max(2, min(61, x)), min(y, bottom)))
+    return pts
+
+
+def draw_lightning(d, phase, top=BAR_H + 1, bottom=43):
+    """Bolts behind the numbers rather than a full-panel flash. On an LED
+    matrix in a dark room, blanking the whole thing to white is genuinely
+    unpleasant; a bolt reads as a storm without lighting up the room."""
+    if phase % STRIKE_EVERY >= STRIKE_FRAMES:
+        return False
+
+    strike = phase // STRIKE_EVERY
+    rnd = random.Random(strike * 977)
+    age = phase % STRIKE_EVERY                     # 0,1,2 — fades as it goes
+    core = [(255, 255, 240), (226, 232, 255), (150, 168, 220)][age]
+    halo = [(120, 134, 190), (86, 98, 150), (56, 64, 104)][age]
+
+    for _ in range(rnd.choice((1, 1, 2))):
+        pts = bolt_path(rnd, rnd.randrange(10, 54), top,
+                        rnd.randint(30, bottom))
+        d.line(pts, fill=halo, width=3)
+        d.line(pts, fill=core, width=1)
+        if len(pts) > 3 and rnd.random() < 0.7:     # a fork off the main bolt
+            i = rnd.randrange(1, len(pts) - 1)
+            fork = bolt_path(rnd, pts[i][0], pts[i][1],
+                             min(pts[i][1] + 10, bottom))
+            d.line(fork, fill=core, width=1)
+    return True
+
+
+def checker_flanks(d, word, phase, bar_color):
+    """Checkers either side of the word, marching outward. Under the text
+    they destroy it; on the flanks they read as a flag and stay legible."""
     tw = text_width(word, BAR_SCALE)
-    x = (64 - (SPRITE_W + 3 + tw)) // 2
-    draw_sprite(d, word, x, 3, tc)
-    draw_text(d, word, x + SPRITE_W + 3, 4, tc, BAR_SCALE)
+    x0 = (64 - tw) // 2
+    dark = tuple(round(v * 0.45) for v in bar_color)
+    for span in (range(0, max(0, x0 - 3), 4), range(x0 + tw + 3, 64, 4)):
+        for x in span:
+            for y in range(0, BAR_H + 1, 4):
+                on = ((x // 4) + (y // 4) + phase // 3) % 2 == 0
+                d.rectangle([x, y, x + 3, min(y + 3, BAR_H)],
+                            fill=(248, 248, 248) if on else dark)
 
-    draw_centered(d, f"{wx['temp']}\u00b0", 20, DUST, 4)
 
-    d.line([2, 43, 61, 43], fill=RAIL)
-    days = wx.get("days") or []
-    for i, (name, hi, lo) in enumerate(days[:3]):
-        cx = 11 + i * 21
-        draw_text(d, name, cx - text_width(name, 1) // 2, 45, SLATE, 1)
-        t = f"{hi}/{lo}"
-        draw_text(d, t, cx - text_width(t, 1) // 2, 51, DUST, 1)
+def draw_car(d, phase):
+    """A little stock car on a dashed track along the bottom row."""
+    road = 63
+    d.line([0, road, 63, road], fill=RAIL)
+    for x in range(-((phase * 3) % 12), 64, 12):
+        d.line([x, road, x + 5, road], fill=SLATE)
 
-    note = stale_note(wx.get("status", "OK"))
-    draw_footer(img, f"{wx['rain']}% RAIN  {wx['wind']} MPH"
-                + (f"  {note}" if note else ""), phase,
-                SODIUM if note else SLATE)
-    return img
+    # six pixels tall, so the track rows above it stay untouched
+    cx = (phase * 2) % 84 - 18
+    d.rectangle([cx, road - 3, cx + 12, road - 1], fill=(228, 62, 58))
+    d.rectangle([cx + 3, road - 5, cx + 8, road - 3], fill=(46, 40, 58))
+    d.point((cx + 2, road), fill=(22, 20, 28))
+    d.point((cx + 10, road), fill=(22, 20, 28))
 
 
 def _marquee(img, text, y, color, scale, phase,
@@ -561,6 +630,18 @@ def scrolling_text(name, dirt, bath, wx):
     return None
 
 
+def is_animated(name, dirt, bath, wx):
+    """Screens that move on their own, independently of scrolling text.
+    Weather moves whenever there's something to see in the sky; the flag
+    screen moves only when a track is actually green."""
+    if name == "weather":
+        return sky_name(wx.get("code", 0)) in ("rain", "snow", "storms", "night")
+    if name == "flag":
+        return dirt.get("status") == "OK" and dirt.get("state") not in (
+            "standby", "unknown")
+    return False
+
+
 def needs_marquee(name, dirt, bath, wx):
     got = scrolling_text(name, dirt, bath, wx)
     if not got:
@@ -575,6 +656,134 @@ def marquee_seconds(text, scale, floor):
     the board hostage."""
     cycle = marquee_span(text, scale) / (MARQUEE_PX / MARQUEE_STEP)
     return min(max(cycle, floor), MARQUEE_MAX)
+
+
+# ---------------------------------------------------------------- screens
+
+def screen_flag(dirt, bath, wx, cal, phase=0):
+    """All three tracks at once. The bar carries tonight's headline; the rows
+    say what each track is doing, so a dark Fonda is as visible as a green
+    Albany. When nothing is running, the soonest track is lit — three equally
+    dim rows make you read all of them to find the one that matters."""
+    img, d = canvas()
+
+    status = dirt.get("status", "OK")
+    if status in ("OFFLINE", "UNKNOWN") or not dirt.get("rows"):
+        return draw_unavailable(img, d, "DIRTCHECK", status)
+
+    bar_color, bar_text, word = STATES.get(dirt["state"], STATES["standby"])
+
+    # Stale data keeps its content but loses its colour. Green is a claim
+    # about right now; an hour-old fetch has no business making it.
+    if status == "STALE":
+        bar_color, bar_text = RAIL, DUST
+
+    standby = dirt["state"] == "standby"
+    racing = dirt["state"] == "racing" and status == "OK"
+
+    if standby:
+        draw_bar(d, SODIUM, "DIRT CHK", LOAM)
+    else:
+        draw_bar(d, bar_color, word, bar_text)
+        if racing:
+            checker_flanks(d, word, phase, bar_color)
+
+    rows = dirt.get("rows") or []
+    ROW_H, y0 = 12, BAR_H + 4
+
+    def risk_chip(r):
+        """The chip is rain risk, not race state — that way it carries
+        information every day of the week rather than only on race nights.
+        'Is it happening now' is answered by NOW in the day column and by the
+        bar going green."""
+        if r["state"] == "rained":
+            return RED
+        p = r["prob"]
+        if p is None:
+            return RAIL
+        if p >= 60:
+            return RED
+        if p >= 30:
+            return YELLOW
+        return GREEN
+
+    # on a standby screen the first row is the next race, so highlight it
+    lit = 0 if standby and rows else -1
+
+    for i, r in enumerate(rows[:3]):
+        y = y0 + i * ROW_H
+        live = r["state"] != "dark"
+        hot = (i == lit)
+
+        d.rectangle([0, y, 2, y + ROW_H - 3],
+                    fill=RAIL if status == "STALE" else risk_chip(r))
+        ink = TRACK_INK.get(r["code"], DUST)
+        draw_text(d, r["code"], 6, y + 1,
+                  ink if (live or hot) else tuple(v // 2 for v in ink), 2)
+
+        # two fixed columns so a 3-char code and a 3-char day never collide
+        draw_text(d, r["when"], 34, y + 3,
+                  SODIUM if (live or hot) else SLATE, 1)
+        if r["prob"] is not None:
+            p = f"{r['prob']}%"
+            draw_text(d, p, 62 - text_width(p, 1), y + 3,
+                      DUST if (live or hot) else SLATE, 1)
+
+    note = stale_note(status)
+    if racing and not note:
+        # A car crosses the footer while cars are actually crossing a track.
+        # It only ever runs on a green night, which is what makes it worth
+        # looking at rather than wallpaper.
+        draw_car(d, phase)
+    else:
+        draw_footer(img, f"{dirt['label']}  {note}".strip() if note
+                    else dirt["label"], phase, SODIUM if note else SLATE)
+    return img
+
+
+def screen_weather(dirt, bath, wx, cal, phase=0):
+    """The sky behind the numbers is the forecast. Rain falls, snow drifts,
+    stars twinkle, lightning forks behind the numbers — so the screen answers
+    from across the room
+    and the digits are only confirmation."""
+    status = wx.get("status", "OK")
+    if status in ("OFFLINE", "UNKNOWN") or "temp" not in wx:
+        return draw_unavailable(*canvas(), "WEATHER", status)
+
+    kind = sky_name(wx.get("code", 0))
+
+    img, d = sky(kind)
+    if kind == "storms":
+        draw_lightning(d, phase)
+        precip(d, "storm", phase)          # bolts behind, rain in front
+    else:
+        precip(d, kind, phase)
+
+    c, tc, word = wx_bar(wx)
+    d.rectangle([0, 0, 63, BAR_H], fill=c)
+    sc = fit_scale(word, BAR_SCALE)
+    tw = text_width(word, sc)
+    x = (64 - (SPRITE_W + 3 + tw)) // 2
+    draw_sprite(d, word if word in SPRITES else "CLEAR", x, 3, tc)
+    draw_text(d, word, x + SPRITE_W + 3, 4 + (BAR_SCALE - sc) * 2, tc, sc)
+
+    big = str(wx["temp"])
+    ink = temp_ink(wx["temp"])
+    draw_centered(d, big, 22, ink, 4)
+
+    # three-day strip, legible against whatever sky is behind it
+    pale, dim = (232, 238, 250), (196, 210, 232)
+    d.line([4, 46, 59, 46], fill=dim)
+    for i, (n, hi, lo) in enumerate(wx.get("days", [])[:3]):
+        cx = 11 + i * 21
+        draw_text(d, n, cx - text_width(n, 1) // 2, 48, dim, 1)
+        v = f"{hi}/{lo}"
+        draw_text(d, v, cx - text_width(v, 1) // 2, 54, pale, 1)
+
+    note = stale_note(status)
+    if note:
+        draw_footer(img, note, phase, SODIUM)
+    return img
 
 
 def jf_line(jf):
@@ -611,6 +820,34 @@ def screen_jellyfin(dirt, bath, wx, cal, phase=0):
         d.line([0, 63, 63, 63], fill=RAIL)
         d.line([0, 63, int(63 * pct / 100), 63],
                fill=SLATE if jf.get("paused") else SODIUM)
+    return img
+
+
+def screen_podium(dirt, bath, wx, cal, phase=0):
+    """Last Cup result as a podium. Only in rotation when there's a finished
+    race to show, so it disappears rather than going stale."""
+    pod = (wx.get("nascar") or {}).get("podium") or {}
+    img, d = canvas()
+
+    d.rectangle([0, 0, 63, BAR_H], fill=SODIUM)
+    word = pod.get("venue", "RESULT")
+    sc = fit_scale(word, BAR_SCALE)
+    tw = text_width(word, sc)
+    x = max(1, (64 - (SPRITE_W + 3 + tw)) // 2)
+    draw_sprite(d, "NASCAR", x, 3, LOAM)
+    _marquee(img, word, 4 + (BAR_SCALE - sc) * 2, LOAM, sc, phase,
+             x0=x + SPRITE_W + 3, x1=62)
+    d = ImageDraw.Draw(img)
+
+    MEDAL = [(255, 214, 92), (198, 206, 216), (198, 132, 72)]
+    y = 22
+    for (pos, name), ink in zip(pod.get("top", []), MEDAL):
+        d.rectangle([1, y, 8, y + 8], fill=ink)
+        draw_text(d, pos, 4, y + 2, (20, 16, 10), 1)
+        draw_text(d, name[:11], 12, y + 2, DUST, 1)
+        y += 13
+
+    draw_footer(img, "LAST RACE", phase)
     return img
 
 
@@ -666,6 +903,7 @@ SCREENS = {
     "weather": screen_weather,
     "jellyfin": screen_jellyfin,
     "nascar": screen_nascar,
+    "podium": screen_podium,
 }
 
 
@@ -689,8 +927,8 @@ def rotation(now=None):
     if is_race_night(now):
         return [("flag", 30), ("weather", 10), ("nascar", 8), ("jellyfin", 16)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 18), ("flag", 12), ("nascar", 10), ("jellyfin", 16)]
-    return [("flag", 14), ("weather", 14), ("nascar", 12), ("jellyfin", 18)]
+        return [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8), ("jellyfin", 16)]
+    return [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10), ("jellyfin", 18)]
 
 
 # ---------------------------------------------------------------- data
@@ -878,7 +1116,7 @@ def main():
             SCREENS["flag"](dd, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
-        for name in ("weather", "nascar", "jellyfin"):
+        for name in ("weather", "nascar", "podium", "jellyfin"):
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
@@ -911,14 +1149,19 @@ def main():
                 # nothing playing means no Jellyfin screen at all
                 if name == "jellyfin" and not bath.get("playing"):
                     continue
+                if name == "podium" and not (wx.get("nascar") or {}).get("podium"):
+                    continue
 
                 # A long title has to move to be read, which means pushing
                 # frames instead of one still. Only when it doesn't fit.
-                if needs_marquee(name, dirt, bath, wx):
-                    text, scale, _w = scrolling_text(name, dirt, bath, wx)
+                if needs_marquee(name, dirt, bath, wx) or \
+                        is_animated(name, dirt, bath, wx):
+                    got = scrolling_text(name, dirt, bath, wx)
+                    run = dwell
+                    if got and needs_marquee(name, dirt, bath, wx):
+                        run = marquee_seconds(got[0], got[1], dwell)
                     dev.set_brightness(brightness_now())
-                    steps = int(marquee_seconds(text, scale, dwell)
-                                / MARQUEE_STEP)
+                    steps = int(run / MARQUEE_STEP)
                     for i in range(steps):
                         dev.push_image(SCREENS[name](dirt, bath, wx, cal,
                                                      phase=i * MARQUEE_PX))

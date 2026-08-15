@@ -56,14 +56,15 @@ body{
 #app{
   position:relative;z-index:2;
   padding:var(--gap);display:grid;gap:var(--gap);
-  grid-template-rows:auto 1.35fr 1fr;
-  grid-template-columns:1.4fr 1fr;
-  grid-template-areas:"flag flag" "tracks weather" "nascar media";
+  grid-template-rows:auto 1.15fr .85fr .8fr;
+  grid-template-columns:1.32fr 1fr;
+  grid-template-areas:"flag flag" "tracks weather" "nascar weather" "media weather";
 }
 /* With nothing playing, the weather column grows downward rather than the
    race rows stretching across the full width — three items spread over
    1900px reads as a gap, not a list. */
-body.no-media #app{grid-template-areas:"flag flag" "tracks weather" "nascar weather"}
+body.no-media #app{grid-template-rows:auto 1.2fr 1fr;
+  grid-template-areas:"flag flag" "tracks weather" "nascar weather"}
 body.no-media #media{display:none}
 .card{background:var(--panel);border-radius:var(--r);overflow:hidden;
       display:flex;flex-direction:column;min-height:0}
@@ -162,6 +163,30 @@ body.no-media #media{display:none}
         font-size:.68em;color:#c3d4ec;letter-spacing:.18em}
 .day .hi{font-size:42px;font-weight:800;line-height:1.15}
 .day .lo{font-size:.86em;color:#b3c6e2}
+
+/* -------------------------------------------------------------- radar
+   Fixed tiles rather than a mapping library: a wall panel never pans or
+   zooms, so there is nothing for Leaflet to do, and one fewer CDN to be
+   offline when the internet is. */
+#radar{position:relative;flex:1;min-height:0;overflow:hidden;
+       border-top:1px solid rgba(255,255,255,.18);z-index:2}
+#radar .tiles{position:absolute;top:0;left:0;width:100%;height:100%;
+              transform-origin:0 0}
+#radar .pins{position:absolute;inset:0}
+#radar .tiles img{position:absolute;image-rendering:auto}
+#radarBase img{filter:grayscale(1) brightness(.55) contrast(1.15)}
+#radarEcho img{opacity:0;transition:opacity .18s linear;mix-blend-mode:screen}
+#radarEcho img.on{opacity:.92}
+#radar .pin{position:absolute;transform:translate(-50%,-50%);
+            width:11px;height:11px;border-radius:50%;
+            box-shadow:0 0 0 2px rgba(0,0,0,.65)}
+#radar .pin b{position:absolute;left:15px;top:-5px;font-size:15px;
+              font-weight:800;letter-spacing:.06em;white-space:nowrap;
+              text-shadow:0 1px 3px #000,0 0 8px #000}
+#radar .radarfoot{position:absolute;left:0;right:0;bottom:0;display:flex;
+  gap:1em;padding:.35em .8em;background:linear-gradient(transparent,#000a 55%)}
+#radar .credit{margin-left:auto;opacity:.5;text-decoration:none;
+               color:inherit}
 
 /* ------------------------------------------------------------- nascar */
 #nascar{grid-area:nascar}
@@ -276,6 +301,16 @@ body.no-media #media{display:none}
     <canvas id="sky"></canvas>
     <header><h2 id="wxWord">Weather</h2><span class="eyebrow right">Schenectady</span></header>
     <div class="body" id="wxBody"></div>
+    <div id="radar">
+      <div class="tiles" id="radarBase"></div>
+      <div class="tiles" id="radarEcho"></div>
+      <div class="pins" id="radarPins"></div>
+      <div class="radarfoot">
+        <span class="eyebrow" id="radarTime">—</span>
+        <a class="eyebrow credit" href="https://www.rainviewer.com"
+           >Weather data by RainViewer &middot; &copy; OpenStreetMap, CARTO</a>
+      </div>
+    </div>
   </section>
 
   <section class="card" id="nascar">
@@ -487,6 +522,124 @@ function renderMedia(jf){
     </div>`;
 }
 
+/* ---------------------------------------------------------------- radar
+   Slippy-map maths done by hand. At zoom 7 one tile spans roughly 300km
+   here, which is the right scale for watching a cell arrive from the west
+   rather than for pinpointing a street. */
+const RZ = 7, TILE = 256;
+/* RainViewer's free tier tops out at zoom 7, which is ~900 m/px — at that
+   scale the three tracks sit 90px apart and their labels collide. Tiles are
+   drawn at zoom 7 and scaled up, trading a little sharpness for a frame the
+   labels actually fit in. Radar echoes are soft blobs; they survive it. */
+const RS = 2;
+const HOME = [42.8142, -73.9396];              // Schenectady
+const TRACKS = [
+  ["ALBANY-SARATOGA", 42.9989, -73.7912, "#5fbf5a"],
+  ["LEBANON VALLEY",  42.5834, -73.3979, "#5fbf5a"],
+  ["FONDA",           42.9556, -74.3743, "#5fbf5a"],
+];
+
+function project(lat, lng, z){
+  const n = Math.pow(2, z);
+  const x = (lng + 180) / 360 * n;
+  const r = lat * Math.PI / 180;
+  const y = (1 - Math.log(Math.tan(r) + 1/Math.cos(r)) / Math.PI) / 2 * n;
+  return [x * TILE, y * TILE];                  // world pixels
+}
+
+let radarFrames = [], radarHost = "", radarPos = 0, radarBuilt = "";
+
+function buildRadar(){
+  const box = $("#radar");
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return;
+
+  const vw = w / RS, vh = h / RS;                 // virtual, pre-scale
+  const [cx, cy] = project(HOME[0], HOME[1], RZ);
+  const originX = cx - vw/2, originY = cy - vh/2;
+  const x0 = Math.floor(originX / TILE), x1 = Math.floor((originX + vw) / TILE);
+  const y0 = Math.floor(originY / TILE), y1 = Math.floor((originY + vh) / TILE);
+
+  const base = $("#radarBase"); base.innerHTML = "";
+  base.style.transform = "scale(" + RS + ")";
+  for (let x = x0; x <= x1; x++)
+    for (let y = y0; y <= y1; y++){
+      const img = new Image();
+      img.src = `https://basemaps.cartocdn.com/dark_all/${RZ}/${x}/${y}.png`;
+      img.style.left = (x*TILE - originX) + "px";
+      img.style.top  = (y*TILE - originY) + "px";
+      img.width = TILE; img.height = TILE;
+      base.appendChild(img);
+    }
+
+  // Pins are positioned in real pixels so the labels keep their own size
+  const pins = $("#radarPins"); pins.innerHTML = "";
+  TRACKS.forEach(([name, lat, lng, ink]) => {
+    const [px, py] = project(lat, lng, RZ);
+    const el = document.createElement("div");
+    el.className = "pin";
+    el.style.left = ((px - originX) * RS) + "px";
+    el.style.top  = ((py - originY) * RS) + "px";
+    el.style.background = ink;
+    el.innerHTML = `<b style="color:${ink}">${name.split("-")[0]}</b>`;
+    pins.appendChild(el);
+  });
+
+  // one image per frame, all preloaded, shown by toggling opacity — swapping
+  // src instead would flash white on every step
+  const echo = $("#radarEcho"); echo.innerHTML = "";
+  echo.style.transform = "scale(" + RS + ")";
+  radarFrames.forEach((f, i) => {
+    for (let x = x0; x <= x1; x++)
+      for (let y = y0; y <= y1; y++){
+        const img = new Image();
+        img.src = `${radarHost}${f.path}/${TILE}/${RZ}/${x}/${y}/4/1_1.png`;
+        img.dataset.frame = i;
+        img.style.left = (x*TILE - originX) + "px";
+        img.style.top  = (y*TILE - originY) + "px";
+        img.width = TILE; img.height = TILE;
+        echo.appendChild(img);
+      }
+  });
+  radarPos = radarFrames.length - 1;
+  showFrame();
+}
+
+function showFrame(){
+  const f = radarFrames[radarPos];
+  if (!f) return;
+  $("#radarEcho").querySelectorAll("img").forEach(im => {
+    im.classList.toggle("on", +im.dataset.frame === radarPos);
+  });
+  const t = new Date(f.time * 1000);
+  const hh = t.getHours() % 12 || 12;
+  $("#radarTime").textContent =
+    `${hh}:${String(t.getMinutes()).padStart(2,"0")} ${t.getHours()<12?"AM":"PM"}`;
+}
+
+let radarHold = 0;
+function stepRadar(){
+  const n = radarFrames.length;
+  if (!n) return;
+  // Sit on the newest frame for a beat before looping — that one is the
+  // current picture, and it's the one worth looking at.
+  if (radarPos === n - 1 && radarHold < RADAR_HOLD){ radarHold++; return; }
+  radarHold = 0;
+  radarPos = (radarPos + 1) % n;
+  showFrame();
+}
+const RADAR_HOLD = 5;                 // ticks to linger on the latest frame
+setInterval(stepRadar, 420);
+
+function renderRadar(r){
+  if (!r || !(r.frames||[]).length) return;
+  const sig = r.frames.map(f=>f.path).join("|");
+  if (sig === radarBuilt) return;                 // same loop, nothing to do
+  radarBuilt = sig;
+  radarHost = r.host; radarFrames = r.frames;
+  buildRadar();
+}
+
 /* Sky canvas: gradient plus whatever is falling. Same six skies as the
    Pixoo, so the two displays never disagree about the weather either. */
 const SKIES = {
@@ -565,6 +718,7 @@ async function load(){
     renderTracks(s.dirt||{});
     renderWeather(s.weather||{});
     renderNascar(s.nascar);
+    renderRadar(s.radar);
     renderMedia(s.jellyfin);
     const next = (s.weather||{}).sky || "clear";
     if(next!==sky){ sky=next; seedDrops(); }

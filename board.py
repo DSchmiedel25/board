@@ -38,6 +38,10 @@ from config import (
     MORNING, RACE_DAYS, RACE_WINDOW,
 )
 
+# Radar frames for the wall display. Free, no key, attribution required.
+RADAR_URL = "https://api.rainviewer.com/public/weather-maps.json"
+RADAR_FRAMES = 10          # about the last 50 minutes at 5-minute steps
+
 WEATHER_URL = (
     "https://api.open-meteo.com/v1/forecast"
     f"?latitude={LAT}&longitude={LON}"
@@ -997,8 +1001,10 @@ def snapshot(dirt, bath, wx, path=None):
         "generated": dt.datetime.now().astimezone().isoformat(),
         "hour": dt.datetime.now().hour,
         "dirt": {k: v for k, v in dirt.items() if k != "art"},
-        "weather": {k: v for k, v in wx.items() if k != "nascar"},
+        "weather": {k: v for k, v in wx.items()
+                    if k not in ("nascar", "radar")},
         "nascar": wx.get("nascar") or {},
+        "radar": wx.get("radar") or {},
         "jellyfin": {k: v for k, v in bath.items() if k != "art"},
     }
     doc["weather"]["sky"] = sky_name(wx.get("code", 0)) if "code" in wx else None
@@ -1037,6 +1043,7 @@ def fetch():
     st_doc = _get(f"{DIRTCHECK_BASE}/status.json", None, "dirtcheck status")
     raw_w = _get(WEATHER_URL, None, "weather")
     raw_n = fetch_nascar()
+    radar = fetch_radar()
 
     # NEVER fall back to demo data here. A demo Albany is green and racing,
     # so a failed fetch would put a confident "RACING" on the wall when the
@@ -1081,6 +1088,8 @@ def fetch():
     if raw_n:
         import nascar as _nascar
         wx["nascar"] = _nascar.build(raw_n, get=_get)
+    if radar:
+        wx["radar"] = radar
 
     snapshot(dirt, bath, wx)
 
@@ -1101,6 +1110,29 @@ def fetch_jellyfin():
                                  clear=SCRIM_TOP)
                  if jf.get("art_id") else None)
     return jf
+
+
+def fetch_radar():
+    """Frame list for the radar loop.
+
+    The board fetches this, not the page: RainViewer's JSON endpoint doesn't
+    send CORS headers, so a browser request would be blocked. Tiles are plain
+    images and load fine from the page.
+
+    Paths are opaque hashes now — the old timestamp-based URLs return 410 —
+    so they must come from this document rather than being constructed.
+    """
+    doc = _get(RADAR_URL, None, "radar")
+    if not doc:
+        return None
+    past = ((doc.get("radar") or {}).get("past") or [])[-RADAR_FRAMES:]
+    if not past:
+        return None
+    return {
+        "host": doc.get("host", "https://tilecache.rainviewer.com"),
+        "frames": [{"path": f.get("path"), "time": f.get("time")}
+                   for f in past if f.get("path")],
+    }
 
 
 def fetch_nascar():

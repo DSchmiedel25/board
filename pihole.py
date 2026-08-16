@@ -42,6 +42,19 @@ def clean_domain(d):
                   "", d.strip().lower())
 
 
+def client_name(name):
+    """'Living-Room-TV.lan' -> 'LIVING-ROOM-TV'. A bare IP keeps its last two
+    octets, since the first two are the same for everything on this LAN and
+    spending characters on '192.168.' tells you nothing."""
+    if not name:
+        return "?"
+    name = name.strip()
+    if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", name):
+        return ".".join(name.split(".")[2:])
+    name = re.sub(r"\.(lan|local|home|localdomain)$", "", name, flags=re.I)
+    return name.upper()
+
+
 # ------------------------------------------------------------------ v6
 
 class _V6:
@@ -81,6 +94,10 @@ class _V6:
             "total": int(q.get("total", 0)),
             "blocked": int(q.get("blocked", 0)),
             "pct": float(q.get("percent_blocked", 0.0)),
+            "domains": int(q.get("unique_domains", 0)),
+            "forwarded": int(q.get("forwarded", 0)),
+            "cached": int(q.get("cached", 0)),
+            "clients": int((s.get("clients") or {}).get("active", 0)),
             "gravity": int((s.get("gravity") or {}).get("domains_being_blocked", 0)),
             "enabled": True,
             "top": "",
@@ -104,6 +121,14 @@ class _V6:
                               for e in (h.get("history") or [])]
         except Exception:
             pass
+        try:
+            c = self.get("/api/stats/top_clients?count=6")
+            out["top_clients"] = [
+                (client_name(e.get("name") or e.get("ip") or ""), int(e.get("count", 0)))
+                for e in (c.get("clients") or [])
+            ]
+        except Exception:
+            pass
         return out
 
 
@@ -124,6 +149,10 @@ class _V5:
             "total": int(s.get("dns_queries_today", 0)),
             "blocked": int(s.get("ads_blocked_today", 0)),
             "pct": float(s.get("ads_percentage_today", 0.0)),
+            "domains": int(s.get("unique_domains", 0)),
+            "forwarded": int(s.get("queries_forwarded", 0)),
+            "cached": int(s.get("queries_cached", 0)),
+            "clients": int(s.get("unique_clients", 0)),
             "gravity": int(s.get("domains_being_blocked", 0)),
             "enabled": str(s.get("status", "enabled")).lower() == "enabled",
             "top": "",
@@ -142,6 +171,13 @@ class _V5:
             ad = h.get("ads_over_time") or {}
             keys = sorted(dom.keys(), key=lambda k: int(k))
             out["history"] = [(int(dom.get(k, 0)), int(ad.get(k, 0))) for k in keys]
+        except Exception:
+            pass
+        try:
+            c = self.get("getQuerySources=6")
+            src = c.get("top_sources") or {}
+            out["top_clients"] = [(client_name(k.split("|")[0]), int(v))
+                                  for k, v in src.items()]
         except Exception:
             pass
         return out

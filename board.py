@@ -968,16 +968,6 @@ def ph_short(n):
     return str(n)
 
 
-def ph_bar(ph):
-    """The bar answers 'is DNS actually protecting the house right now'. That
-    is a different question from 'how much did it block today', which is what
-    the big number underneath is for — a paused Pi-hole still shows a healthy
-    percentage from earlier in the day, and the bar is what catches it."""
-    if not ph.get("enabled", True):
-        return YELLOW, LOAM, "PAUSED"
-    return GREEN, LOAM, "BLOCKING"
-
-
 def ph_graph(d, history, top, bottom):
     """24h of queries, blocked stacked at the baseline. Resampled to whatever
     column count fits rather than assuming Pi-hole's bucket size."""
@@ -1014,34 +1004,102 @@ def ph_graph(d, history, top, bottom):
             y -= 1
 
 
+def ph_pair(d, x, y, label, value, vcol, right=False):
+    """Label in slate, value in colour. Two tones per row means the eye lands
+    on the number and reads the label only if it needs to."""
+    lw, vw = text_width(label, 1), text_width(value, 1)
+    if right:
+        x -= lw + (3 if label else 0) + vw
+    if label:
+        draw_text(d, label, x, y, SLATE, 1)
+        x += lw + 3
+    draw_text(d, value, x, y, vcol, 1)
+
+
+def ph_num(n, budget):
+    """Full digits with separators when they fit, abbreviated when they don't.
+    598 stays 598; 1,284,391 becomes 1.3M rather than running into the column
+    next to it. Precision is worth more than consistency at this size."""
+    s = commas(n)
+    return s if text_width(s, 1) <= budget else ph_short(n)
+
+
+def ph_row(d, y, llabel, lvalue, lcol, rlabel, rvalue, rcol):
+    """Right side is placed first and the left gets whatever is left over, so
+    a growing number degrades gracefully instead of overlapping."""
+    ph_pair(d, 62, y, rlabel, rvalue, rcol, right=True)
+    used = text_width(rlabel, 1) + (3 if rlabel else 0) + text_width(rvalue, 1)
+    budget = (62 - used - 3) - (2 + text_width(llabel, 1) + 3)
+    ph_pair(d, 2, y, llabel, lvalue(budget) if callable(lvalue) else lvalue, lcol)
+
+
+def ph_trim(s, px):
+    """Trim to fit, preferring a break at a separator — 'LIVING-ROOM' reads as
+    a name, 'LIVING-ROO' reads as a bug."""
+    if text_width(s, 1) <= px:
+        return s
+    while s and text_width(s, 1) > px:
+        s = s[:-1]
+    cut = max(s.rfind("-"), s.rfind("."), s.rfind("_"))
+    if cut >= len(s) - 3 and cut > 3:
+        s = s[:cut]
+    return s
+
+
+CLIENT_X1 = 47           # names end here
+CLIENT_BAR = (49, 62)    # frequency bar lives here
+
+
+def ph_clients(d, clients, y0, rows=4, step=7):
+    """Who is doing the talking. The bar is relative to the noisiest client,
+    not to the total — the question this answers is 'which box is chatty',
+    and against a total everything but the top one would be an invisible sliver."""
+    if not clients:
+        draw_text(d, "NO CLIENT DATA", 2, y0 + 7, SLATE, 1)
+        return
+    peak = max((c[1] for c in clients), default=0) or 1
+    for i, (name, count) in enumerate(clients[:rows]):
+        y = y0 + i * step
+        draw_text(d, ph_trim(name, CLIENT_X1 - 2), 2, y, DUST, 1)
+        x0, x1 = CLIENT_BAR
+        d.rectangle([x0, y + 1, x1, y + 3], fill=RAIL)
+        w = max(1, round(count / peak * (x1 - x0)))
+        d.rectangle([x0, y + 1, x0 + w, y + 3], fill=PH_ALLOW)
+
+
 def screen_pihole(dirt, bath, wx, cal, phase=0):
-    """What the house's DNS did today. The footer carries the top blocked
-    domain, which is the part that actually tells you something new — it is
-    how you notice a device that started phoning somewhere."""
+    """Everything the Pi-hole dashboard's top row says, plus who is generating
+    the traffic and the shape of the last 24 hours — the three things you
+    cannot get from a single number."""
     ph = (wx or {}).get("pihole") or {}
     status = ph.get("status", "UNKNOWN")
     if status in ("OFFLINE", "UNKNOWN") or "pct" not in ph:
         return draw_unavailable(*canvas(), "PI-HOLE", status)
 
     img, d = canvas()
-    c, tc, word = ph_bar(ph)
-    draw_bar(d, c, word, tc)
+    on = ph.get("enabled", True)
 
-    pct = f"{ph['pct']:.0f}%"
-    draw_centered(d, pct, 19, SODIUM, min(3, fit_scale(pct, 3)))
+    # --- the four headline figures, laid out as two columns of pairs -------
+    ph_row(d, 1, "Q", lambda b: ph_num(ph.get("total", 0), b), PH_ALLOW,
+           "CLI", str(ph.get("clients", 0)), DUST)
+    ph_row(d, 8, "ADS", lambda b: ph_num(ph.get("blocked", 0), b), SODIUM,
+           "", f"{ph['pct']:.1f}%", SODIUM)
+    word = "ON" if on else "PAUSED"
+    ph_row(d, 15, "LIST", lambda b: ph_num(ph.get("gravity", 0), b), DUST,
+           "", word, GREEN if on else YELLOW)
 
-    q = f"Q {ph_short(ph.get('total', 0))}"
-    b = f"B {ph_short(ph.get('blocked', 0))}"
-    # Q and B wear the same colours as the graph below, which is what lets this
-    # row serve as the legend. 64px leaves no room for a real one.
-    draw_text(d, q, 2, 36, PH_ALLOW, 1)
-    draw_text(d, b, 62 - text_width(b, 1), 36, SODIUM, 1)
+    d.line([0, 21, 63, 21], fill=RAIL)
 
-    ph_graph(d, ph.get("history") or [], 42, 56)
+    # --- top clients ------------------------------------------------------
+    ph_clients(d, ph.get("top_clients") or [], 24)
 
+    # --- 24h shape --------------------------------------------------------
     note = stale_note(status)
-    draw_footer(img, note or ph.get("top", ""), phase,
-                SODIUM if note else SLATE)
+    if note:
+        draw_text(d, note, 2, 53, SODIUM, 1)
+    else:
+        d.line([0, 51, 63, 51], fill=RAIL)
+        ph_graph(d, ph.get("history") or [], 53, 63)
     return img
 
 

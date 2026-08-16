@@ -292,6 +292,7 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 .pair{display:flex;gap:10px}
 .pair button{margin-top:0}
 .note{color:var(--slate);font-size:13px;margin-top:18px;line-height:1.55}
+.flag{color:var(--sodium);font-size:12px;letter-spacing:.16em}
 
 /* Photos */
 #pick{position:absolute;opacity:0;width:0;height:0}
@@ -308,7 +309,7 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 .empty{color:var(--slate);font-size:14px;padding:10px 0}
 </style></head><body>
 <h1>Board control</h1>
-<div class="sub">{{STATUS}}</div>
+<div class="sub">{{STATUS}} <span id="saveflag" class="flag"></span></div>
 
 <div class="wrap">
 <div class="col c-mir">
@@ -329,7 +330,7 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 <h2>Brightness</h2>
 <div class="card"><div class="chips">{{BRIGHT}}</div></div>
 
-<button type="submit" name="do" value="save">Save</button>
+<button class="savebtn" type="submit" name="do" value="save">Save</button>
 <div class="pair">
   <button class="ghost" type="submit" name="do" value="refresh">Refresh data</button>
   <button class="ghost" type="submit" name="do" value="restart">Restart board</button>
@@ -365,6 +366,49 @@ screen off leaves DirtCheck on — a blank board looks broken rather than off.</
 setInterval(() => {
   document.getElementById("mirror").src = "frame.png?t=" + Date.now();
 }, 2000);
+
+/* Flipping a switch and then having to find a Save button is a trap — it
+   looks like the toggle reverted when really nothing was ever submitted.
+   Every control posts itself. The Save button stays for the no-JS case. */
+(function autosave(){
+  const form = document.querySelector("form.c-ctl");
+  if (!form) return;
+  const flag = document.getElementById("saveflag");
+
+  let timer = null;
+  function send(){
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const body = new URLSearchParams(new FormData(form));
+      body.set("do", "save");
+      flag.textContent = "saving";
+      try {
+        const r = await fetch("/", {method: "POST", body,
+          headers: {"Content-Type": "application/x-www-form-urlencoded"}});
+        flag.textContent = r.ok ? "saved" : "save failed";
+      } catch (e) {
+        flag.textContent = "save failed";
+      }
+      setTimeout(() => { flag.textContent = ""; }, 1600);
+    }, 220);          // coalesce rapid taps into one write
+  }
+
+  form.addEventListener("change", e => {
+    if (e.target.matches("input[type=checkbox],input[type=radio]")) send();
+  });
+
+  /* Pinning disables the on/off switches server-side; mirror that here so
+     the page doesn't need a round trip to look right. */
+  form.addEventListener("change", e => {
+    if (e.target.name !== "pin") return;
+    const pinned = !!e.target.value;
+    form.querySelectorAll("input[type=checkbox]").forEach(c => {
+      c.disabled = pinned;
+    });
+  });
+
+  document.querySelector(".savebtn").style.display = "none";
+})();
 </script>
 </body></html>"""
 

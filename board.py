@@ -1294,9 +1294,12 @@ def snapshot(dirt, bath, wx, path=None):
         "hour": dt.datetime.now().hour,
         "dirt": {k: v for k, v in dirt.items() if k != "art"},
         "weather": {k: v for k, v in wx.items()
-                    if k not in ("nascar", "radar")},
+                    if k not in ("nascar", "radar", "pihole")},
         "nascar": wx.get("nascar") or {},
         "radar": wx.get("radar") or {},
+        # Rides in wx so the screens can reach it, but it is not weather —
+        # give the wall page a top-level key rather than making it dig.
+        "pihole": wx.get("pihole") or {},
         "health": HEALTH,
         "jellyfin": {k: v for k, v in bath.items() if k != "art"},
     }

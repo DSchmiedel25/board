@@ -59,16 +59,25 @@ body{
   /* Now playing is a strip along the bottom rather than a fourth box in the
      left column — stacking four cards there squeezed the track rows into
      each other and clipped the last NASCAR series. */
-  grid-template-rows:auto 1.15fr 1fr 152px;
+  grid-template-rows:auto minmax(0,1.15fr) minmax(0,1fr) 160px 152px;
   grid-template-columns:1.32fr 1fr;
-  grid-template-areas:"flag flag" "tracks weather" "nascar weather" "media media";
+  grid-template-areas:"flag flag" "tracks weather" "nascar weather"
+                      "pihole pihole" "media media";
 }
 /* With nothing playing, the weather column grows downward rather than the
    race rows stretching across the full width — three items spread over
    1900px reads as a gap, not a list. */
-body.no-media #app{grid-template-rows:auto 1.2fr 1fr;
-  grid-template-areas:"flag flag" "tracks weather" "nascar weather"}
+body.no-media #app{grid-template-rows:auto minmax(0,1.2fr) minmax(0,1fr) 160px;
+  grid-template-areas:"flag flag" "tracks weather" "nascar weather"
+                      "pihole pihole"}
 body.no-media #media{display:none}
+/* Same rule for Pi-hole: an empty card is worse than no card, so if the
+   source is down or unconfigured the row collapses entirely. */
+body.no-pihole #app{grid-template-rows:auto minmax(0,1.15fr) minmax(0,1fr) 152px;
+  grid-template-areas:"flag flag" "tracks weather" "nascar weather" "media media"}
+body.no-pihole.no-media #app{grid-template-rows:auto 1.2fr 1fr;
+  grid-template-areas:"flag flag" "tracks weather" "nascar weather"}
+body.no-pihole #pihole{display:none}
 .card{background:var(--panel);border-radius:var(--r);overflow:hidden;
       display:flex;flex-direction:column;min-height:0}
 .card > header{padding:.7em 1.1em;display:flex;align-items:baseline;gap:1em;
@@ -330,6 +339,33 @@ body.no-media #media{display:none}
 
 /* --------------------------------------------------------- unavailable
    A dead source says so. It never borrows the look of live data. */
+/* ---- Pi-hole -------------------------------------------------------- */
+#pihole{grid-area:pihole}
+#pihole > header{padding:.45em 1.1em}
+#pihole > header h2{font-size:1.4em}
+#pihole .body{flex-direction:row;gap:var(--gap);padding:10px var(--gap);
+              align-items:stretch}
+.ph-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:.7em;flex:1.15}
+.ph-stat{background:var(--sunk);border-radius:12px;padding:.5em .9em;
+         display:flex;flex-direction:column;justify-content:center}
+.ph-stat .k{font-size:.72em;letter-spacing:.13em;text-transform:uppercase;
+            color:var(--slate);font-weight:800}
+.ph-stat .v{font-size:1.85em;font-weight:900;line-height:1.05;color:var(--dust)}
+/* Blocked wears sodium, queries wear blue, here and on the Pixoo. The pair
+   separates for colourblind viewers where the obvious red/green does not. */
+.ph-stat.q .v{color:#56b4e9}
+.ph-stat.ads .v,.ph-stat.pct .v{color:var(--sodium)}
+.ph-clients{flex:1;display:flex;flex-direction:column;gap:.12em;justify-content:center}
+.ph-cli{display:grid;grid-template-columns:1fr 62px 120px;gap:.9em;
+        align-items:center;font-size:.95em}
+.ph-cli .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+           color:var(--dust);font-weight:700;letter-spacing:.02em}
+.ph-cli .c{text-align:right;color:var(--slate);
+           font-family:"DejaVu Sans Mono",ui-monospace,monospace}
+.ph-cli .b{height:8px;border-radius:4px;background:var(--rail);overflow:hidden}
+.ph-cli .b i{display:block;height:100%;border-radius:4px;background:#56b4e9}
+.ph-off .v{color:var(--yellow)}
+
 .down{flex:1;display:grid;place-items:center;text-align:center;color:var(--slate)}
 .down b{display:block;font-size:40px;color:var(--dust);
         letter-spacing:.1em;margin-bottom:.25em}
@@ -380,6 +416,14 @@ body.no-media #media{display:none}
   <section class="card" id="nascar">
     <header><h2 id="ncVenue">NASCAR</h2><span class="eyebrow right">Next race per series</span></header>
     <div class="body" id="ncBody"></div>
+  </section>
+
+  <section class="card" id="pihole">
+    <header><h2>Pi-hole</h2><span class="eyebrow right" id="pihState"></span></header>
+    <div class="body">
+      <div class="ph-stats" id="phStats"></div>
+      <div class="ph-clients" id="phClients"></div>
+    </div>
   </section>
 
   <section class="card" id="media">
@@ -496,6 +540,49 @@ function renderTracks(dirt){
            <div class="rain">${r.prob==null?"":r.prob+"% RAIN"}</div></div>
     </div>`;
   }).join("");
+}
+
+const NUM = n => (n==null ? "—" : Number(n).toLocaleString());
+const SHORT = n => n==null ? "—"
+  : n >= 1e6 ? (n/1e6).toFixed(1)+"M"
+  : n >= 1e4 ? Math.round(n/1e3)+"K"
+  : Number(n).toLocaleString();
+
+function renderPihole(ph){
+  ph = ph || {};
+  const status = ph.status || "UNKNOWN";
+  // No host configured, or nothing reachable: drop the row rather than
+  // parking an empty card on the wall.
+  if (status === "UNKNOWN" || status === "OFFLINE" || ph.pct == null){
+    document.body.classList.add("no-pihole"); return;
+  }
+  document.body.classList.remove("no-pihole");
+
+  const on = ph.enabled !== false;
+  $("#pihState").innerHTML = status === "STALE" ? `<span class="pill">Stale</span>`
+                           : on ? "" : `<span class="pill">Paused</span>`;
+
+  $("#phStats").innerHTML = `
+    <div class="ph-stat q"><div class="k">Queries</div>
+      <div class="v">${NUM(ph.total)}</div></div>
+    <div class="ph-stat ads"><div class="k">Blocked</div>
+      <div class="v">${NUM(ph.blocked)}</div></div>
+    <div class="ph-stat pct"><div class="k">Percent</div>
+      <div class="v">${(ph.pct||0).toFixed(1)}%</div></div>
+    <div class="ph-stat${on?"":" ph-off"}"><div class="k">On lists</div>
+      <div class="v">${SHORT(ph.gravity)}</div></div>`;
+
+  const cl = ph.top_clients || [];
+  if (!cl.length){ $("#phClients").innerHTML =
+      `<div class="down"><div>No client data</div></div>`; return; }
+  // Scaled against the noisiest client, not the total — the question is which
+  // box is chatty, and against a total everything but the top one vanishes.
+  const peak = Math.max(...cl.map(c=>c[1]), 1);
+  $("#phClients").innerHTML = cl.slice(0,4).map(([name,count])=>`
+    <div class="ph-cli"><div class="n">${name}</div>
+      <div class="c">${NUM(count)}</div>
+      <div class="b"><i style="width:${Math.max(3,count/peak*100)}%"></i></div>
+    </div>`).join("");
 }
 
 function renderWeather(wx){
@@ -830,6 +917,7 @@ async function load(){
     renderNascar(s.nascar);
     renderRadar(s.radar);
     renderMedia(s.jellyfin);
+    renderPihole(s.pihole);
     const next = (s.weather||{}).sky || "clear";
     if(next!==sky){ sky=next; seedDrops(); }
   }catch(e){

@@ -1,39 +1,18 @@
-
-Cloud
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Control · PY
 #!/usr/bin/env python3
 """
 control.py — web panel for the Pixoo board.
- 
+
 Runs as its own service on port 8081, deliberately separate from the display
 loop. nginx only serves static files so something has to accept the POST, but
 putting that inside board.py would let a bug in a web handler take the board
 down — which has already happened once, from a JSON error. If this process
 dies the board carries on with whatever was last saved.
- 
+
 Writes screens.json; board.py reads it at the top of every rotation, so a
 change lands within one screen. Reads frame.png and state.json, both written
 by board.py, for the live mirror and the source health list.
 """
- 
+
 import base64
 import binascii
 import json
@@ -42,19 +21,19 @@ import re
 import time
 from urllib.parse import parse_qsl
 from http.server import BaseHTTPRequestHandler, HTTPServer
- 
+
 try:
     from config import DATA_DIR
 except ImportError:
     DATA_DIR = "/var/www/html/data"
- 
+
 PORT = 8081
 STATE = os.path.join(DATA_DIR, "screens.json")
- 
+
 PHOTO_DIR = os.path.join(DATA_DIR, "photos")
 MAX_UPLOAD = 12 * 1024 * 1024          # generous for a phone photo
 MAX_PHOTOS = 40
- 
+
 SCREENS = [
     ("flag",     "DirtCheck",   "Albany-Saratoga, Lebanon Valley, Fonda"),
     ("weather",  "Weather",     "Now and the three-day forecast"),
@@ -65,19 +44,19 @@ SCREENS = [
     ("pihole",   "Pi-hole",     "DNS blocked today, top clients, 24h shape"),
 ]
 KEYS = [k for k, _l, _d in SCREENS]
- 
+
 DWELL_MIN, DWELL_MAX = 4, 90
 # Matches board.py's time-of-day plan for a normal afternoon; the slider only
 # writes a value once you move it, so untouched screens keep following the
 # race-night / morning schedules.
 DWELL_HINT = {"flag": 14, "weather": 14, "nascar": 12, "podium": 10,
               "photo": 12, "jellyfin": 18, "pihole": 10}
- 
+
 DEFAULTS = {"screens": {k: True for k in KEYS}, "pin": None,
             "brightness": "auto", "dwell": {}, "command": None,
             "command_id": 0}
- 
- 
+
+
 def load():
     try:
         with open(STATE) as f:
@@ -95,11 +74,11 @@ def load():
                     if k in KEYS and str(v).isdigit()}
     out["command_id"] = saved.get("command_id") or 0
     return out
- 
- 
+
+
 def save(cfg):
     """Returns an error string, or "" on success.
- 
+
     A failed write used to be invisible: the page re-rendered from the
     unchanged file, so a switch appeared to flip itself back. Now it says so.
     """
@@ -112,13 +91,13 @@ def save(cfg):
         return ""
     except OSError as e:
         return "%s: %s" % (type(e).__name__, e)
- 
- 
+
+
 # ---------------------------------------------------------------- photos
- 
+
 def parse_multipart(body, boundary):
     """Pull uploaded files out of a multipart body.
- 
+
     Hand-rolled because Python 3.13 removed the cgi module, and pulling in a
     dependency for one form would be silly on a box that has to keep working
     unattended.
@@ -140,18 +119,18 @@ def parse_multipart(body, boundary):
         if data:
             out.append((os.path.basename(name), data))
     return out
- 
- 
+
+
 def photo_files():
     try:
         return sorted(f for f in os.listdir(PHOTO_DIR) if f.endswith(".png"))
     except OSError:
         return []
- 
- 
+
+
 def save_photo(name, blob):
     """Resize on upload, not on display.
- 
+
     The board reads these inside its rotation loop, so they land as finished
     64x64 PNGs. A whole photo is fitted rather than centre-cropped — cropping
     a group shot to a square usually removes the people — and the gaps are
@@ -159,20 +138,20 @@ def save_photo(name, blob):
     """
     from PIL import Image, ImageOps, ImageFilter, ImageEnhance
     import io
- 
+
     src = Image.open(io.BytesIO(blob))
     src = ImageOps.exif_transpose(src).convert("RGB")   # honour phone rotation
- 
+
     back = ImageOps.fit(src, (64, 64), Image.LANCZOS).filter(
         ImageFilter.GaussianBlur(5))
     back = ImageEnhance.Brightness(back).enhance(0.55)
     front = src.copy()
     front.thumbnail((64, 64), Image.LANCZOS)
     back.paste(front, ((64 - front.width) // 2, (64 - front.height) // 2))
- 
+
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0])[:40] or "photo"
     os.makedirs(PHOTO_DIR, exist_ok=True)
- 
+
     # Whole-second timestamps collide when several files arrive together, and
     # the second upload silently replaced the first. Walk until the name is
     # free instead.
@@ -182,24 +161,24 @@ def save_photo(name, blob):
     while os.path.exists(path):
         path = os.path.join(PHOTO_DIR, "%s_%d.png" % (base, n))
         n += 1
- 
+
     back.save(path, format="PNG")
     return path
- 
- 
+
+
 def save_cropped(name, blob):
     """Store a 64x64 PNG the browser already composed.
- 
+
     The editor does the cropping, so this only has to check the size is what
     it claims and pick a free filename — no resizing, no guessing at intent.
     """
     from PIL import Image
     import io
- 
+
     img = Image.open(io.BytesIO(blob)).convert("RGB")
     if img.size != (64, 64):
         img = img.resize((64, 64), Image.LANCZOS)
- 
+
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0])[:40] or "photo"
     os.makedirs(PHOTO_DIR, exist_ok=True)
     base = "%d_%s" % (time.time(), stem)
@@ -210,8 +189,8 @@ def save_cropped(name, blob):
         k += 1
     img.save(path, format="PNG")
     return path
- 
- 
+
+
 def ago(ts):
     if not ts:
         return "never"
@@ -221,8 +200,8 @@ def ago(ts):
     if s < 5400:
         return "%dm ago" % round(s / 60)
     return "%dh ago" % round(s / 3600)
- 
- 
+
+
 def gallery():
     shots = photo_files()
     if not shots:
@@ -233,8 +212,8 @@ def gallery():
         '<input type="hidden" name="f" value="%s">'
         '<button type="submit" title="delete">&times;</button></form></div>'
         % (f, f) for f in shots)
- 
- 
+
+
 def health_rows():
     try:
         with open(os.path.join(DATA_DIR, "state.json")) as f:
@@ -251,8 +230,8 @@ def health_rows():
             '<span class="hname">%s</span><span class="hval">%s</span></div>'
             % ("ok" if ok else "bad", name, detail))
     return "".join(rows) or '<div class="hrow"><span class="hname">no data yet</span></div>'
- 
- 
+
+
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Board control</title>
@@ -264,7 +243,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
 body{background:var(--loam);color:var(--dust);padding:20px 18px 60px;
      font-family:"Barlow Condensed","Arial Narrow",Helvetica,Arial,sans-serif;
      font-size:18px;max-width:560px;margin:0 auto}
- 
+
 /* One column on a phone. On anything wider the three groups sit side by
    side rather than stretching a 560px ribbon down the middle of a monitor. */
 .wrap{display:grid;gap:0 26px}
@@ -312,12 +291,12 @@ h2{font-size:15px;letter-spacing:.2em;text-transform:uppercase;color:var(--slate
 .txt{flex:1;min-width:0}
 .name{font-size:23px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
 .desc{color:var(--slate);font-size:13px;margin-top:2px}
- 
+
 /* Live mirror of the panel on the wall. */
 #mirror{display:block;width:230px;height:230px;margin:0 auto;border-radius:12px;
         image-rendering:pixelated;background:var(--sunk)}
 .mirwrap{text-align:center;padding:16px}
- 
+
 /* A real checkbox underneath, so it works without JS and keeps keyboard
    and screen-reader behaviour. */
 .sw{position:relative;flex:none;width:62px;height:34px}
@@ -329,7 +308,7 @@ h2{font-size:15px;letter-spacing:.2em;text-transform:uppercase;color:var(--slate
 .sw input:checked ~ .trk{background:var(--green)}
 .sw input:checked ~ .knob{transform:translateX(28px)}
 .sw input:disabled ~ .trk{opacity:.4}
- 
+
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{position:relative}
 .chip input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
@@ -337,7 +316,7 @@ h2{font-size:15px;letter-spacing:.2em;text-transform:uppercase;color:var(--slate
            color:var(--slate);font-size:16px;letter-spacing:.08em;
            text-transform:uppercase;font-weight:700}
 .chip input:checked + span{background:var(--sodium);color:#12100c}
- 
+
 .hrow{display:flex;align-items:center;gap:10px;padding:7px 0;
       border-bottom:1px solid var(--rail);font-size:15px}
 .hrow:last-child{border-bottom:0}
@@ -345,7 +324,7 @@ h2{font-size:15px;letter-spacing:.2em;text-transform:uppercase;color:var(--slate
 .dot.ok{background:var(--green)} .dot.bad{background:var(--red)}
 .hname{flex:1;font-family:ui-monospace,Menlo,monospace;color:var(--dust)}
 .hval{color:var(--slate);font-family:ui-monospace,Menlo,monospace;font-size:13px}
- 
+
 button{width:100%;padding:15px;font-size:19px;font-weight:700;letter-spacing:.1em;
        text-transform:uppercase;color:#12100c;background:var(--sodium);border:0;
        border-radius:13px;cursor:pointer;font-family:inherit;margin-top:14px}
@@ -354,7 +333,7 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 .pair button{margin-top:0}
 .note{color:var(--slate);font-size:13px;margin-top:18px;line-height:1.55}
 .flag{color:var(--sodium);font-size:12px;letter-spacing:.16em}
- 
+
 /* Dwell slider, one per screen */
 .dwell{display:flex;align-items:center;gap:12px;margin-top:10px;
        padding-top:10px;border-top:1px solid var(--rail)}
@@ -362,7 +341,7 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 .dval{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--slate);
       min-width:3.4em;text-align:right;letter-spacing:.06em}
 .card:has(input[type=checkbox]:not(:checked)) .dwell{opacity:.35}
- 
+
 /* Photo editor */
 .edhead{display:flex;gap:10px;align-items:baseline;margin:14px 0 8px;
         font-family:ui-monospace,Menlo,monospace;font-size:12px;
@@ -386,7 +365,7 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 .edprev{display:flex;align-items:center;gap:12px;margin:12px 0}
 #edout{width:64px;height:64px;image-rendering:pixelated;border-radius:8px;
        background:var(--sunk)}
- 
+
 /* Photos */
 #pick{position:absolute;opacity:0;width:0;height:0}
 .filebtn{display:block;text-align:center;padding:15px;border-radius:13px;
@@ -403,34 +382,34 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 </style></head><body>
 <h1>Board control</h1>
 <div class="sub">{{STATUS}} <span id="saveflag" class="flag"></span></div>
- 
+
 <div class="wrap">
 <div class="col c-mir">
 <div class="card mirwrap">
   <img id="mirror" src="frame.png" alt="live board">
   <div class="sub" style="margin-top:10px">Live &middot; refreshes every 2s</div>
 </div>
- 
+
 </div>
- 
+
 <form method="post" class="col c-ctl">
 <h2>Screens</h2>
 {{ROWS}}
- 
+
 <h2>Hold one screen</h2>
 <div class="card"><div class="chips">{{PINS}}</div></div>
- 
+
 <h2>Brightness</h2>
 <div class="card"><div class="chips">{{BRIGHT}}</div></div>
- 
+
 <button class="savebtn" type="submit" name="do" value="save">Save</button>
 <div class="pair">
   <button class="ghost" type="submit" name="do" value="refresh">Refresh data</button>
   <button class="ghost" type="submit" name="do" value="restart">Restart board</button>
 </div>
- 
+
 </form>
- 
+
 <div class="col c-pho">
 <h2>Photos</h2>
 <div class="card">
@@ -439,7 +418,7 @@ button.ghost{background:var(--sunk);color:var(--dust)}
     <label for="pick" class="filebtn">Choose photos</label>
     <button type="submit" class="plainup">Upload</button>
   </form>
- 
+
   <div id="editor" hidden>
     <div class="edhead"><span id="edcount"></span><span id="edname"></span></div>
     <div class="edstage">
@@ -463,24 +442,24 @@ button.ghost{background:var(--sunk);color:var(--dust)}
   <div class="gal">{{GALLERY}}</div>
 </div>
 </div>
- 
+
 <div class="col c-src">
 <h2>Sources</h2>
 <div class="card">{{HEALTH}}</div>
- 
+
 <p class="note">Changes land within one screen. Holding a screen ignores the
 rotation and the on/off switches until you set it back to Off. Turning every
 screen off leaves DirtCheck on — a blank board looks broken rather than off.</p>
 </div>
 </div>
- 
+
 <script>
 /* Cache-bust the mirror; the file is rewritten in place every couple of
    seconds and the browser would otherwise sit on the first copy. */
 setInterval(() => {
   document.getElementById("mirror").src = "frame.png?t=" + Date.now();
 }, 2000);
- 
+
 /* Flipping a switch and then having to find a Save button is a trap — it
    looks like the toggle reverted when really nothing was ever submitted.
    Every control posts itself. The Save button stays for the no-JS case. */
@@ -491,16 +470,16 @@ setInterval(() => {
   const pick = document.getElementById("pick");
   const box = document.getElementById("editor");
   if (!pick || !box) return;
- 
+
   const stage = document.getElementById("edcanvas");
   const cx = stage.getContext("2d");
   const out = document.getElementById("edout");
   const ox = out.getContext("2d");
   const zoom = document.getElementById("edzoom");
- 
+
   let queue = [], img = null, mode = "fill";
   let scale = 1, base = 1, tx = 0, ty = 0;
- 
+
   function reset(){
     const S = stage.width;
     base = (mode === "fill")
@@ -512,14 +491,14 @@ setInterval(() => {
     ty = (S - img.height * scale) / 2;
     draw();
   }
- 
+
   function clamp(){
     if (mode !== "fill") return;                   // fit mode may sit centred
     const S = stage.width, w = img.width * scale, h = img.height * scale;
     tx = Math.min(0, Math.max(tx, S - w));
     ty = Math.min(0, Math.max(ty, S - h));
   }
- 
+
   function paint(ctx, size){
     const k = size / stage.width;
     ctx.clearRect(0, 0, size, size);
@@ -537,9 +516,9 @@ setInterval(() => {
     ctx.drawImage(img, tx * k, ty * k, img.width * scale * k,
                   img.height * scale * k);
   }
- 
+
   function draw(){ clamp(); paint(cx, stage.width); paint(ox, 64); }
- 
+
   function load(file){
     document.getElementById("edname").textContent = file.name;
     document.getElementById("edcount").textContent =
@@ -552,18 +531,18 @@ setInterval(() => {
     };
     fr.readAsDataURL(file);
   }
- 
+
   function next(){
     if (!queue.length){ box.hidden = true; img = null; return; }
     load(queue.shift());
   }
- 
+
   pick.addEventListener("change", () => {
     queue = Array.from(pick.files || []);
     document.querySelector(".plainup").style.display = "none";
     next();
   });
- 
+
   zoom.addEventListener("input", () => {
     const S = stage.width, cxp = S / 2, cyp = S / 2;
     const old = scale;
@@ -573,7 +552,7 @@ setInterval(() => {
     ty = cyp - (cyp - ty) * (scale / old);
     draw();
   });
- 
+
   document.querySelectorAll(".mode").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".mode").forEach(b => b.classList.remove("on"));
@@ -582,7 +561,7 @@ setInterval(() => {
       if (img) reset();
     });
   });
- 
+
   let dragging = false, lx = 0, ly = 0;
   stage.addEventListener("pointerdown", e => {
     dragging = true; lx = e.clientX; ly = e.clientY;
@@ -596,9 +575,9 @@ setInterval(() => {
     draw();
   });
   stage.addEventListener("pointerup", () => { dragging = false; });
- 
+
   document.getElementById("edskip").addEventListener("click", next);
- 
+
   document.getElementById("edadd").addEventListener("click", async () => {
     const body = new URLSearchParams();
     body.set("img", out.toDataURL("image/png"));
@@ -608,12 +587,12 @@ setInterval(() => {
     if (queue.length) next(); else location.reload();
   });
 })();
- 
+
 (function autosave(){
   const form = document.querySelector("form.c-ctl");
   if (!form) return;
   const flag = document.getElementById("saveflag");
- 
+
   let timer = null;
   function send(){
     clearTimeout(timer);
@@ -631,12 +610,12 @@ setInterval(() => {
       setTimeout(() => { flag.textContent = ""; }, 1600);
     }, 220);          // coalesce rapid taps into one write
   }
- 
+
   form.addEventListener("change", e => {
     if (e.target.matches("input[type=checkbox],input[type=radio],input[type=range]"))
       send();
   });
- 
+
   /* The number tracks the thumb while dragging; the save waits for release,
      so one drag is one write rather than fifty. */
   form.addEventListener("input", e => {
@@ -644,7 +623,7 @@ setInterval(() => {
     const lab = document.getElementById("dv_" + e.target.dataset.for);
     if (lab) lab.textContent = e.target.value + "s";
   });
- 
+
   /* Pinning disables the on/off switches server-side; mirror that here so
      the page doesn't need a round trip to look right. */
   form.addEventListener("change", e => {
@@ -654,12 +633,12 @@ setInterval(() => {
       c.disabled = pinned;
     });
   });
- 
+
   document.querySelector(".savebtn").style.display = "none";
 })();
 </script>
 </body></html>"""
- 
+
 ROW = """<div class="card"><div class="row">
   <div class="txt"><div class="name">{{LABEL}}</div><div class="desc">{{DESC}}</div></div>
   <label class="sw"><input type="checkbox" name="{{KEY}}" {{ON}} {{DIS}}>
@@ -670,11 +649,11 @@ ROW = """<div class="card"><div class="row">
          value="{{DVAL}}" data-for="{{KEY}}">
   <span class="dval" id="dv_{{KEY}}">{{DVAL}}s</span>
 </div></div>"""
- 
+
 CHIP = """<label class="chip"><input type="radio" name="{{GROUP}}" value="{{VAL}}" {{ON}}>
   <span>{{LABEL}}</span></label>"""
- 
- 
+
+
 def chips(group, options, current):
     out = []
     for val, label in options:
@@ -682,8 +661,8 @@ def chips(group, options, current):
                    .replace("{{LABEL}}", label)
                    .replace("{{ON}}", "checked" if str(val) == str(current) else ""))
     return "".join(out)
- 
- 
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, body, ctype="text/html; charset=utf-8", code=200):
         self.send_response(code)
@@ -692,7 +671,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
- 
+
     def _page(self, status):
         cfg = load()
         pinned = cfg["pin"]
@@ -703,7 +682,7 @@ class Handler(BaseHTTPRequestHandler):
                .replace("{{DMIN}}", str(DWELL_MIN)).replace("{{DMAX}}", str(DWELL_MAX))
                .replace("{{DVAL}}", str(cfg["dwell"].get(k, DWELL_HINT.get(k, 12))))
             for k, l, d in SCREENS)
- 
+
         body = (PAGE.replace("{{ROWS}}", rows)
                     .replace("{{STATUS}}", status)
                     .replace("{{PINS}}", chips("pin", [("", "Off")] +
@@ -714,7 +693,7 @@ class Handler(BaseHTTPRequestHandler):
                     .replace("{{HEALTH}}", health_rows())
                     .replace("{{GALLERY}}", gallery()))
         self._send(body.encode())
- 
+
     def do_GET(self):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
@@ -740,11 +719,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
             return
         self.send_error(404)
- 
+
     def do_POST(self):
         path = self.path.split("?")[0]
         n = int(self.headers.get("Content-Length") or 0)
- 
+
         if path == "/upload":
             ctype = self.headers.get("Content-Type", "")
             if n > MAX_UPLOAD or "boundary=" not in ctype:
@@ -764,7 +743,7 @@ class Handler(BaseHTTPRequestHandler):
             self._page("Added %d photo%s%s" % (done, "" if done == 1 else "s",
                        ", %d failed" % failed if failed else ""))
             return
- 
+
         if path == "/crop":
             raw = self.rfile.read(n).decode()
             form = dict(parse_qsl(raw, keep_blank_values=True))
@@ -775,7 +754,7 @@ class Handler(BaseHTTPRequestHandler):
             except (binascii.Error, ValueError, OSError) as e:
                 self._page("Could not save photo (%s)" % type(e).__name__)
             return
- 
+
         if path == "/delete":
             raw = self.rfile.read(n).decode()
             name = os.path.basename(raw.split("f=", 1)[-1].split("&")[0])
@@ -785,20 +764,20 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self._page("Could not delete")
             return
- 
+
         raw = self.rfile.read(n).decode()
         # parse_qsl rather than splitting by hand: the crop editor posts
         # base64, which is full of + and = and would come out corrupted.
         form = dict(parse_qsl(raw, keep_blank_values=True))
- 
+
         cfg = load()
         action = form.get("do", "save")
- 
+
         # Logged so `journalctl -u control` shows exactly which fields the
         # browser submitted. A checkbox that never arrives and one that
         # arrives unchecked look identical in the saved file.
         print("POST %s fields=%s" % (action, sorted(form)), flush=True)
- 
+
         if action == "save":
             cfg["screens"] = {k: (k in form) for k in KEYS}
             if not any(cfg["screens"].values()):
@@ -816,15 +795,14 @@ class Handler(BaseHTTPRequestHandler):
             cfg["command"] = action
             cfg["command_id"] = int(time.time())
             msg = "Refreshing" if action == "refresh" else "Restarting board"
- 
+
         err = save(cfg)
         self._page(("Could not save &mdash; " + err) if err else msg)
- 
+
     def log_message(self, *a):
         pass
- 
- 
+
+
 if __name__ == "__main__":
     print("control panel on http://0.0.0.0:%d  (state: %s)" % (PORT, STATE))
     HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
- 

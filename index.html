@@ -297,6 +297,37 @@ body.no-media #media{display:none}
 .prog i{display:block;height:100%;border-radius:.25em;background:var(--sodium)}
 .left{grid-row:3;grid-column:1/4;font-size:.78em;color:var(--slate);margin-top:3px}
 
+/* The strip is wide and short, so several watchers sit side by side as equal
+   cells rather than one hero with the rest crammed into a sidebar. */
+.streams{display:flex;align-items:stretch;gap:var(--gap);flex:1;min-width:0}
+/* stretch, not center: with centred children the row height is indefinite,
+   so the poster's height:100% fell back to its natural 600px and swallowed
+   half the strip. */
+.stream{display:flex;align-items:stretch;gap:16px;flex:1;min-width:0}
+.stream + .stream{border-left:1px solid rgba(255,255,255,.16);
+                  padding-left:var(--gap)}
+/* Sized by width, not height: a percentage height against an indefinite row
+   resolves to the image's natural 600px, which ate half the strip. */
+.stream .art{width:82px;height:auto;aspect-ratio:2/3;border-radius:9px;
+             object-fit:cover;background:var(--sunk);flex:0 0 auto;
+             align-self:center;
+             box-shadow:0 10px 24px -8px rgba(0,0,0,.7),
+                        0 0 0 1px rgba(255,255,255,.08)}
+.stream .art[data-empty]{display:none}
+.sinfo{display:flex;flex-direction:column;justify-content:center;gap:3px;
+       min-width:0;flex:1}
+.stitle{font-size:30px;font-weight:700;text-transform:uppercase;line-height:1.05;
+        letter-spacing:.01em;white-space:nowrap;overflow:hidden;
+        text-overflow:ellipsis}
+.ssub{font-size:16px;color:#cbb9a6;white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis}
+.swho{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
+      letter-spacing:.16em;color:var(--sodium)}
+.stream .prog{margin-top:5px;height:7px}
+#media[data-n="2"] .stitle{font-size:26px}
+#media[data-n="3"] .stitle{font-size:21px}
+#media[data-n="3"] .ssub{font-size:14px}
+
 /* --------------------------------------------------------- unavailable
    A dead source says so. It never borrows the look of live data. */
 .down{flex:1;display:grid;place-items:center;text-align:center;color:var(--slate)}
@@ -552,26 +583,33 @@ function renderMedia(jf){
   const on = jf && jf.playing;
   document.body.classList.toggle("no-media", !on);
   if (!on) return;
+
+  // Everyone watching, not just the one the Pixoo picked. Two streams sit
+  // side by side; beyond that they stack as compact rows, because a wall
+  // panel should never hide the fact that somebody else is watching.
+  const all = (jf.all && jf.all.length) ? jf.all : [jf];
+  document.getElementById("media").dataset.n = Math.min(all.length, 3);
   /* Cache-bust on the title, not the clock: a new bust every poll would
      refetch the same image four times a minute and restart its animation. */
   const key = encodeURIComponent((jf.title||"") + (jf.sub||""));
   const src = jf.poster ? `${jf.poster}?k=${key}` : "";
   const back = $("#backdrop");
   back.style.backgroundImage = src ? `url("${src}")` : "none";
-  const art = src
-    ? `<img id="poster" src="${src}" alt="" decoding="async"
-            onerror="this.setAttribute('data-empty','');
-                     document.getElementById('backdrop').style.backgroundImage='none'">`
-    : "";
-  $("#mediaBody").innerHTML = `
-    ${art}
-    <div class="meta">
-      <div class="title">${jf.title||""}</div>
-      <div class="ep">${jf.sub||""}</div>
-      <div class="who">${(jf.user||"").toUpperCase()}${jf.paused?" &middot; PAUSED":""}</div>
-      <div class="prog"><i style="width:${jf.pct||0}%"></i></div>
-      <div class="left">${jf.pct!=null?jf.pct+"%":""}</div>
-    </div>`;
+  const cells = all.map((v, i) => `
+    <div class="stream">
+      ${i === 0 && src
+        ? `<img class="art" src="${src}" alt="" decoding="async"
+             onerror="this.setAttribute('data-empty','')">`
+        : ""}
+      <div class="sinfo">
+        <div class="swho">${(v.user||"").toUpperCase()}${v.paused?" &middot; PAUSED":""}</div>
+        <div class="stitle">${v.title||""}</div>
+        <div class="ssub">${v.sub||""}</div>
+        <div class="prog"><i style="width:${v.pct||0}%"></i></div>
+      </div>
+    </div>`).join("");
+
+  $("#mediaBody").innerHTML = `<div class="streams">${cells}</div>`;
 }
 
 /* ---------------------------------------------------------------- radar

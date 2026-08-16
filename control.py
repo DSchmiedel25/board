@@ -13,10 +13,13 @@ change lands within one screen. Reads frame.png and state.json, both written
 by board.py, for the live mirror and the source health list.
 """
 
+import base64
+import binascii
 import json
 import os
 import re
 import time
+from urllib.parse import parse_qsl
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 try:
@@ -148,6 +151,31 @@ def save_photo(name, blob):
         n += 1
 
     back.save(path, format="PNG")
+    return path
+
+
+def save_cropped(name, blob):
+    """Store a 64x64 PNG the browser already composed.
+
+    The editor does the cropping, so this only has to check the size is what
+    it claims and pick a free filename — no resizing, no guessing at intent.
+    """
+    from PIL import Image
+    import io
+
+    img = Image.open(io.BytesIO(blob)).convert("RGB")
+    if img.size != (64, 64):
+        img = img.resize((64, 64), Image.LANCZOS)
+
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0])[:40] or "photo"
+    os.makedirs(PHOTO_DIR, exist_ok=True)
+    base = "%d_%s" % (time.time(), stem)
+    path = os.path.join(PHOTO_DIR, base + ".png")
+    k = 2
+    while os.path.exists(path):
+        path = os.path.join(PHOTO_DIR, "%s_%d.png" % (base, k))
+        k += 1
+    img.save(path, format="PNG")
     return path
 
 
@@ -294,6 +322,30 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 .note{color:var(--slate);font-size:13px;margin-top:18px;line-height:1.55}
 .flag{color:var(--sodium);font-size:12px;letter-spacing:.16em}
 
+/* Photo editor */
+.edhead{display:flex;gap:10px;align-items:baseline;margin:14px 0 8px;
+        font-family:ui-monospace,Menlo,monospace;font-size:12px;
+        letter-spacing:.14em;color:var(--slate);text-transform:uppercase}
+#edname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.edstage{position:relative;width:300px;max-width:100%;margin:0 auto;
+         aspect-ratio:1;background:#000;border-radius:12px;overflow:hidden;
+         touch-action:none}      /* drag must not scroll the page */
+#edcanvas{width:100%;height:100%;display:block;cursor:grab}
+.edframe{position:absolute;inset:0;pointer-events:none;border-radius:12px;
+  box-shadow:inset 0 0 0 2px rgba(255,255,255,.5)}
+.edframe::before,.edframe::after{content:"";position:absolute;inset:0;
+  border:1px dashed rgba(255,255,255,.22)}
+.edframe::before{border-width:0 1px;left:33.33%;right:33.33%}
+.edframe::after{border-width:1px 0;top:33.33%;bottom:33.33%}
+.edmodes{display:flex;gap:8px;margin:12px 0 8px}
+.mode{flex:1;margin:0;padding:11px;background:var(--sunk);color:var(--slate);
+      font-size:15px}
+.mode.on{background:var(--sodium);color:#12100c}
+#edzoom{width:100%;accent-color:var(--sodium)}
+.edprev{display:flex;align-items:center;gap:12px;margin:12px 0}
+#edout{width:64px;height:64px;image-rendering:pixelated;border-radius:8px;
+       background:var(--sunk)}
+
 /* Photos */
 #pick{position:absolute;opacity:0;width:0;height:0}
 .filebtn{display:block;text-align:center;padding:15px;border-radius:13px;
@@ -344,8 +396,29 @@ button.ghost{background:var(--sunk);color:var(--dust)}
   <form method="post" enctype="multipart/form-data" action="/upload">
     <input type="file" name="pic" accept="image/*" multiple id="pick">
     <label for="pick" class="filebtn">Choose photos</label>
-    <button type="submit">Upload</button>
+    <button type="submit" class="plainup">Upload</button>
   </form>
+
+  <div id="editor" hidden>
+    <div class="edhead"><span id="edcount"></span><span id="edname"></span></div>
+    <div class="edstage">
+      <canvas id="edcanvas" width="300" height="300"></canvas>
+      <div class="edframe"></div>
+    </div>
+    <div class="edmodes">
+      <button type="button" class="mode on" data-mode="fill">Crop to fill</button>
+      <button type="button" class="mode" data-mode="fit">Whole photo</button>
+    </div>
+    <input type="range" id="edzoom" min="100" max="400" value="100">
+    <div class="edprev">
+      <canvas id="edout" width="64" height="64"></canvas>
+      <span class="sub">Board preview</span>
+    </div>
+    <div class="pair">
+      <button type="button" class="ghost" id="edskip">Skip</button>
+      <button type="button" id="edadd">Add to board</button>
+    </div>
+  </div>
   <div class="gal">{{GALLERY}}</div>
 </div>
 </div>
@@ -370,6 +443,131 @@ setInterval(() => {
 /* Flipping a switch and then having to find a Save button is a trap — it
    looks like the toggle reverted when really nothing was ever submitted.
    Every control posts itself. The Save button stays for the no-JS case. */
+/* Photo editor. Crops in the browser and posts a finished 64x64 PNG, so the
+   Pi never handles a 12-megapixel JPEG and you see the exact pixels that will
+   land on the board before committing. */
+(function editor(){
+  const pick = document.getElementById("pick");
+  const box = document.getElementById("editor");
+  if (!pick || !box) return;
+
+  const stage = document.getElementById("edcanvas");
+  const cx = stage.getContext("2d");
+  const out = document.getElementById("edout");
+  const ox = out.getContext("2d");
+  const zoom = document.getElementById("edzoom");
+
+  let queue = [], img = null, mode = "fill";
+  let scale = 1, base = 1, tx = 0, ty = 0;
+
+  function reset(){
+    const S = stage.width;
+    base = (mode === "fill")
+      ? Math.max(S / img.width, S / img.height)     // cover the square
+      : Math.min(S / img.width, S / img.height);    // whole photo inside it
+    scale = base;
+    zoom.value = 100;
+    tx = (S - img.width * scale) / 2;
+    ty = (S - img.height * scale) / 2;
+    draw();
+  }
+
+  function clamp(){
+    if (mode !== "fill") return;                   // fit mode may sit centred
+    const S = stage.width, w = img.width * scale, h = img.height * scale;
+    tx = Math.min(0, Math.max(tx, S - w));
+    ty = Math.min(0, Math.max(ty, S - h));
+  }
+
+  function paint(ctx, size){
+    const k = size / stage.width;
+    ctx.clearRect(0, 0, size, size);
+    if (mode === "fit"){
+      // blurred copy behind, so the gaps carry the photo's colour rather
+      // than black bars — same treatment the posters get
+      const cover = Math.max(size / img.width, size / img.height);
+      ctx.save();
+      ctx.filter = "blur(" + Math.max(2, size / 14) + "px) brightness(.55)";
+      ctx.drawImage(img, (size - img.width * cover) / 2,
+                    (size - img.height * cover) / 2,
+                    img.width * cover, img.height * cover);
+      ctx.restore();
+    }
+    ctx.drawImage(img, tx * k, ty * k, img.width * scale * k,
+                  img.height * scale * k);
+  }
+
+  function draw(){ clamp(); paint(cx, stage.width); paint(ox, 64); }
+
+  function load(file){
+    document.getElementById("edname").textContent = file.name;
+    document.getElementById("edcount").textContent =
+      queue.length ? (queue.length + 1) + " left" : "";
+    const fr = new FileReader();
+    fr.onload = () => {
+      img = new Image();
+      img.onload = () => { box.hidden = false; reset(); };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  }
+
+  function next(){
+    if (!queue.length){ box.hidden = true; img = null; return; }
+    load(queue.shift());
+  }
+
+  pick.addEventListener("change", () => {
+    queue = Array.from(pick.files || []);
+    document.querySelector(".plainup").style.display = "none";
+    next();
+  });
+
+  zoom.addEventListener("input", () => {
+    const S = stage.width, cxp = S / 2, cyp = S / 2;
+    const old = scale;
+    scale = base * (zoom.value / 100);
+    // zoom about the middle of the frame, not the top-left corner
+    tx = cxp - (cxp - tx) * (scale / old);
+    ty = cyp - (cyp - ty) * (scale / old);
+    draw();
+  });
+
+  document.querySelectorAll(".mode").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".mode").forEach(b => b.classList.remove("on"));
+      btn.classList.add("on");
+      mode = btn.dataset.mode;
+      if (img) reset();
+    });
+  });
+
+  let dragging = false, lx = 0, ly = 0;
+  stage.addEventListener("pointerdown", e => {
+    dragging = true; lx = e.clientX; ly = e.clientY;
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener("pointermove", e => {
+    if (!dragging || !img) return;
+    const k = stage.width / stage.getBoundingClientRect().width;
+    tx += (e.clientX - lx) * k; ty += (e.clientY - ly) * k;
+    lx = e.clientX; ly = e.clientY;
+    draw();
+  });
+  stage.addEventListener("pointerup", () => { dragging = false; });
+
+  document.getElementById("edskip").addEventListener("click", next);
+
+  document.getElementById("edadd").addEventListener("click", async () => {
+    const body = new URLSearchParams();
+    body.set("img", out.toDataURL("image/png"));
+    body.set("name", document.getElementById("edname").textContent || "photo");
+    await fetch("/crop", {method: "POST", body,
+      headers: {"Content-Type": "application/x-www-form-urlencoded"}});
+    if (queue.length) next(); else location.reload();
+  });
+})();
+
 (function autosave(){
   const form = document.querySelector("form.c-ctl");
   if (!form) return;
@@ -510,6 +708,17 @@ class Handler(BaseHTTPRequestHandler):
                        ", %d failed" % failed if failed else ""))
             return
 
+        if path == "/crop":
+            raw = self.rfile.read(n).decode()
+            form = dict(parse_qsl(raw, keep_blank_values=True))
+            try:
+                blob = base64.b64decode(form.get("img", "").split(",")[-1])
+                save_cropped(form.get("name", "photo"), blob)
+                self._page("Photo added")
+            except (binascii.Error, ValueError, OSError) as e:
+                self._page("Could not save photo (%s)" % type(e).__name__)
+            return
+
         if path == "/delete":
             raw = self.rfile.read(n).decode()
             name = os.path.basename(raw.split("f=", 1)[-1].split("&")[0])
@@ -521,12 +730,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         raw = self.rfile.read(n).decode()
-        form = {}
-        for part in raw.split("&"):
-            if not part:
-                continue
-            k, _, v = part.partition("=")
-            form[k] = v.replace("+", " ")
+        # parse_qsl rather than splitting by hand: the crop editor posts
+        # base64, which is full of + and = and would come out corrupted.
+        form = dict(parse_qsl(raw, keep_blank_values=True))
 
         cfg = load()
         action = form.get("do", "save")

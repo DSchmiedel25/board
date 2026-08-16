@@ -148,6 +148,31 @@ def _pct(sess, item):
     return max(0, min(100, round(pos / total * 100)))
 
 
+def _one(s):
+    """Flatten a single session into the shape the screens read."""
+    item = s.get("NowPlayingItem") or {}
+    if item.get("Type") == "Episode":
+        title = item.get("SeriesName") or item.get("Name", "")
+        se, ep = item.get("ParentIndexNumber"), item.get("IndexNumber")
+        sub = ("S%dE%d" % (se, ep)) if se and ep else (item.get("Name") or "")
+        if item.get("Name") and se and ep:
+            sub += " \u00b7 " + item["Name"]
+    else:
+        title = item.get("Name", "")
+        sub = str(item.get("ProductionYear") or "")
+
+    play = s.get("PlayState") or {}
+    return {
+        "title": title,
+        "sub": sub,
+        "user": s.get("UserName") or "",
+        "device": s.get("DeviceName") or s.get("Client") or "",
+        "paused": bool(play.get("IsPaused")),
+        "pct": _pct(s, item),
+        "art_id": item.get("SeriesId") or item.get("Id"),
+    }
+
+
 def build(sess_list, count_doc, user=None, device=None):
     """One dict, whether or not anything is playing. Screens read it directly.
 
@@ -179,6 +204,11 @@ def build(sess_list, count_doc, user=None, device=None):
     }
     if not playing:
         return out
+
+    # Every stream, not just the one that wins the wall's hero slot. The 64px
+    # board can only show one, but a 1080p panel has room for the whole house.
+    out["all"] = [_one(s) for s in
+                  sorted(playing, key=lambda s: (s.get("UserName") or "").lower())]
 
     # With several streams up, show the one furthest from finishing. A show
     # with four minutes left is the least useful thing to put on a wall.

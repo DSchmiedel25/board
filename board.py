@@ -667,6 +667,40 @@ def marquee_seconds(text, scale, floor):
     return min(max(cycle, floor), MARQUEE_MAX)
 
 
+PHOTO_DIR = "photos"
+_photo_at = [0]
+
+
+def photo_list():
+    """Uploaded photos, already sized to 64x64 by the control panel."""
+    try:
+        d = os.path.join(DATA_DIR, PHOTO_DIR)
+        return sorted(f for f in os.listdir(d) if f.endswith(".png"))
+    except OSError:
+        return []
+
+
+def screen_photo(dirt, bath, wx, cal, phase=0):
+    """One uploaded photo, full bleed.
+
+    The control panel does the resizing on upload, so this is a file read
+    rather than image work inside the display loop. Advances one photo each
+    time the screen comes round.
+    """
+    shots = photo_list()
+    img, d = canvas()
+    if not shots:
+        draw_centered(d, "NO PHOTOS", 28, SLATE, 1)
+        return img
+    try:
+        pick = shots[_photo_at[0] % len(shots)]
+        img.paste(Image.open(os.path.join(DATA_DIR, PHOTO_DIR, pick))
+                  .convert("RGB"), (0, 0))
+    except Exception:
+        draw_centered(d, "BAD PHOTO", 28, SLATE, 1)
+    return img
+
+
 # ---------------------------------------------------------------- screens
 
 def screen_flag(dirt, bath, wx, cal, phase=0):
@@ -919,6 +953,7 @@ SCREENS = {
     "jellyfin": screen_jellyfin,
     "nascar": screen_nascar,
     "podium": screen_podium,
+    "photo": screen_photo,
 }
 
 
@@ -977,10 +1012,13 @@ def rotation(now=None):
     tracks; mornings lead with the sky; otherwise it spreads evenly."""
     now = now or dt.datetime.now()
     if is_race_night(now):
-        return [("flag", 30), ("weather", 10), ("nascar", 8), ("jellyfin", 16)]
+        return [("flag", 30), ("weather", 10), ("nascar", 8), ("photo", 8),
+            ("jellyfin", 16)]
     if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8), ("jellyfin", 16)]
-    return [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10), ("jellyfin", 18)]
+        return [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8),
+            ("photo", 10), ("jellyfin", 16)]
+    return [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10),
+            ("photo", 12), ("jellyfin", 18)]
 
 
 # ---------------------------------------------------------------- data
@@ -1355,7 +1393,7 @@ def main():
             SCREENS["flag"](dd, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
-        for name in ("weather", "nascar", "podium", "jellyfin"):
+        for name in ("weather", "nascar", "podium", "photo", "jellyfin"):
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
@@ -1409,6 +1447,10 @@ def main():
                     continue
                 if name == "podium" and not (wx.get("nascar") or {}).get("podium"):
                     continue
+                if name == "photo":
+                    if not photo_list():
+                        continue
+                    _photo_at[0] += 1        # next one each time round
 
                 # A long title has to move to be read, which means pushing
                 # frames instead of one still. Only when it doesn't fit.

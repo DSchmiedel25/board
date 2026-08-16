@@ -15,6 +15,7 @@ by board.py, for the live mirror and the source health list.
 
 import json
 import os
+import re
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -26,11 +27,16 @@ except ImportError:
 PORT = 8081
 STATE = os.path.join(DATA_DIR, "screens.json")
 
+PHOTO_DIR = os.path.join(DATA_DIR, "photos")
+MAX_UPLOAD = 12 * 1024 * 1024          # generous for a phone photo
+MAX_PHOTOS = 40
+
 SCREENS = [
     ("flag",     "DirtCheck",   "Albany-Saratoga, Lebanon Valley, Fonda"),
     ("weather",  "Weather",     "Now and the three-day forecast"),
     ("nascar",   "NASCAR",      "Next race for Cup, Xfinity and Trucks"),
     ("podium",   "Race field",  "Starting grid or finishing order"),
+    ("photo",    "Photos",      "Your uploads, one per turn"),
     ("jellyfin", "Now playing", "Only while something is streaming"),
 ]
 KEYS = [k for k, _l, _d in SCREENS]
@@ -63,6 +69,69 @@ def save(cfg):
     os.replace(tmp, STATE)          # atomic: board.py never reads half a file
 
 
+# ---------------------------------------------------------------- photos
+
+def parse_multipart(body, boundary):
+    """Pull uploaded files out of a multipart body.
+
+    Hand-rolled because Python 3.13 removed the cgi module, and pulling in a
+    dependency for one form would be silly on a box that has to keep working
+    unattended.
+    """
+    out = []
+    sep = b"--" + boundary.encode()
+    for chunk in body.split(sep):
+        head, marker, data = chunk.partition(b"\r\n\r\n")
+        if not marker:
+            continue
+        text = head.decode("utf-8", "replace")
+        if "filename=" not in text:
+            continue
+        name = text.split('filename="', 1)[-1].split('"', 1)[0]
+        if not name:
+            continue
+        if data.endswith(b"\r\n"):
+            data = data[:-2]           # the CRLF that precedes the next part
+        if data:
+            out.append((os.path.basename(name), data))
+    return out
+
+
+def photo_files():
+    try:
+        return sorted(f for f in os.listdir(PHOTO_DIR) if f.endswith(".png"))
+    except OSError:
+        return []
+
+
+def save_photo(name, blob):
+    """Resize on upload, not on display.
+
+    The board reads these inside its rotation loop, so they land as finished
+    64x64 PNGs. A whole photo is fitted rather than centre-cropped — cropping
+    a group shot to a square usually removes the people — and the gaps are
+    filled with a blurred copy so the panel isn't letterboxed in black.
+    """
+    from PIL import Image, ImageOps, ImageFilter, ImageEnhance
+    import io
+
+    src = Image.open(io.BytesIO(blob))
+    src = ImageOps.exif_transpose(src).convert("RGB")   # honour phone rotation
+
+    back = ImageOps.fit(src, (64, 64), Image.LANCZOS).filter(
+        ImageFilter.GaussianBlur(5))
+    back = ImageEnhance.Brightness(back).enhance(0.55)
+    front = src.copy()
+    front.thumbnail((64, 64), Image.LANCZOS)
+    back.paste(front, ((64 - front.width) // 2, (64 - front.height) // 2))
+
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0])[:40] or "photo"
+    os.makedirs(PHOTO_DIR, exist_ok=True)
+    path = os.path.join(PHOTO_DIR, "%d_%s.png" % (time.time(), stem))
+    back.save(path, format="PNG")
+    return path
+
+
 def ago(ts):
     if not ts:
         return "never"
@@ -72,6 +141,18 @@ def ago(ts):
     if s < 5400:
         return "%dm ago" % round(s / 60)
     return "%dh ago" % round(s / 3600)
+
+
+def gallery():
+    shots = photo_files()
+    if not shots:
+        return '<div class="empty">No photos yet.</div>'
+    return "".join(
+        '<div class="shot"><img src="photo/%s" alt="">'
+        '<form method="post" action="/delete" style="display:inline">'
+        '<input type="hidden" name="f" value="%s">'
+        '<button type="submit" title="delete">&times;</button></form></div>'
+        % (f, f) for f in shots)
 
 
 def health_rows():
@@ -154,6 +235,20 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 .pair{display:flex;gap:10px}
 .pair button{margin-top:0}
 .note{color:var(--slate);font-size:13px;margin-top:18px;line-height:1.55}
+
+/* Photos */
+#pick{position:absolute;opacity:0;width:0;height:0}
+.filebtn{display:block;text-align:center;padding:15px;border-radius:13px;
+  background:var(--sunk);color:var(--dust);font-size:19px;font-weight:700;
+  letter-spacing:.1em;text-transform:uppercase;cursor:pointer}
+.gal{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
+.shot{position:relative;aspect-ratio:1}
+.shot img{width:100%;height:100%;border-radius:9px;image-rendering:pixelated;
+          display:block}
+.shot button{position:absolute;top:-6px;right:-6px;width:26px;height:26px;
+  margin:0;padding:0;border-radius:50%;background:var(--red);color:#fff;
+  font-size:16px;line-height:1;letter-spacing:0}
+.empty{color:var(--slate);font-size:14px;padding:10px 0}
 </style></head><body>
 <h1>Board control</h1>
 <div class="sub">{{STATUS}}</div>
@@ -179,6 +274,16 @@ button.ghost{background:var(--sunk);color:var(--dust)}
   <button class="ghost" type="submit" name="do" value="restart">Restart board</button>
 </div>
 </form>
+
+<h2>Photos</h2>
+<div class="card">
+  <form method="post" enctype="multipart/form-data" action="/upload">
+    <input type="file" name="pic" accept="image/*" multiple id="pick">
+    <label for="pick" class="filebtn">Choose photos</label>
+    <button type="submit">Upload</button>
+  </form>
+  <div class="gal">{{GALLERY}}</div>
+</div>
 
 <h2>Sources</h2>
 <div class="card">{{HEALTH}}</div>
@@ -240,7 +345,8 @@ class Handler(BaseHTTPRequestHandler):
                     .replace("{{BRIGHT}}", chips("brightness",
                              [("auto", "Auto"), (10, "10%"), (30, "30%"),
                               (60, "60%"), (100, "100%")], cfg["brightness"]))
-                    .replace("{{HEALTH}}", health_rows()))
+                    .replace("{{HEALTH}}", health_rows())
+                    .replace("{{GALLERY}}", gallery()))
         self._send(body.encode())
 
     def do_GET(self):
@@ -252,6 +358,14 @@ class Handler(BaseHTTPRequestHandler):
                    ("%d of %d screens on" % (on, len(SCREENS)))
             self._page(note)
             return
+        if path.startswith("/photo/"):
+            name = os.path.basename(path[len("/photo/"):])
+            try:
+                with open(os.path.join(PHOTO_DIR, name), "rb") as f:
+                    self._send(f.read(), "image/png")
+            except OSError:
+                self.send_error(404)
+            return
         if path == "/frame.png":
             try:
                 with open(os.path.join(DATA_DIR, "frame.png"), "rb") as f:
@@ -262,7 +376,39 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
+        path = self.path.split("?")[0]
         n = int(self.headers.get("Content-Length") or 0)
+
+        if path == "/upload":
+            ctype = self.headers.get("Content-Type", "")
+            if n > MAX_UPLOAD or "boundary=" not in ctype:
+                self._page("Upload too large or malformed")
+                return
+            body = self.rfile.read(n)
+            boundary = ctype.split("boundary=", 1)[1].strip().strip('"')
+            done, failed = 0, 0
+            for name, blob in parse_multipart(body, boundary):
+                if len(photo_files()) >= MAX_PHOTOS:
+                    break
+                try:
+                    save_photo(name, blob)
+                    done += 1
+                except Exception:
+                    failed += 1          # a bad file shouldn't lose the rest
+            self._page("Added %d photo%s%s" % (done, "" if done == 1 else "s",
+                       ", %d failed" % failed if failed else ""))
+            return
+
+        if path == "/delete":
+            raw = self.rfile.read(n).decode()
+            name = os.path.basename(raw.split("f=", 1)[-1].split("&")[0])
+            try:
+                os.remove(os.path.join(PHOTO_DIR, name))
+                self._page("Deleted")
+            except OSError:
+                self._page("Could not delete")
+            return
+
         raw = self.rfile.read(n).decode()
         form = {}
         for part in raw.split("&"):

@@ -1,0 +1,14 @@
+[Unit]
+Description=Pixoo screen toggles
+After=network-online.target
+
+[Service]
+Type=simple
+User=jellyfin
+WorkingDirectory=/home/jellyfin/board
+ExecStart=/usr/bin/python3 /home/jellyfin/board/control.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

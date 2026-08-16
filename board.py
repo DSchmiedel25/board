@@ -935,6 +935,43 @@ def poll_secs(now=None):
     return 60 if is_race_night(now) else 300
 
 
+SCREENS_FILE = "screens.json"
+
+
+def settings():
+    """Everything the control panel can change, read fresh each rotation.
+
+    Any failure returns defaults rather than raising. A settings file should
+    never be able to stop the board — that is the whole reason the panel runs
+    as a separate process in the first place.
+    """
+    d = {"screens": None, "pin": None, "brightness": "auto",
+         "command": None, "command_id": 0}
+    try:
+        with open(os.path.join(DATA_DIR, SCREENS_FILE)) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return d
+    if not isinstance(saved, dict):
+        return d
+
+    scr = saved.get("screens")
+    if isinstance(scr, dict) and any(scr.values()):
+        d["screens"] = {k for k, v in scr.items() if v}
+    if saved.get("pin") in SCREENS:
+        d["pin"] = saved["pin"]
+    b = saved.get("brightness", "auto")
+    if b == "auto" or (isinstance(b, (int, float)) and 0 <= b <= 100):
+        d["brightness"] = b
+    d["command"] = saved.get("command")
+    d["command_id"] = saved.get("command_id") or 0
+    return d
+
+
+def enabled_screens():
+    return settings()["screens"]
+
+
 def rotation(now=None):
     """(screen, seconds) pairs. Race nights hand most of the time to the
     tracks; mornings lead with the sky; otherwise it spreads evenly."""
@@ -959,6 +996,24 @@ def rotation(now=None):
 # Open-Meteo and GitHub Pages don't care either way.
 
 
+HEALTH = {}                 # source name -> {ok, when, error}
+
+
+def note_health(name, ok, err=""):
+    """Per-source record of the last attempt.
+
+    Half the debugging this project has needed was working out which of four
+    feeds had quietly stopped answering. The panel shows it instead.
+    """
+    prev = HEALTH.get(name) or {}
+    HEALTH[name] = {
+        "ok": ok,
+        "last_try": time.time(),
+        "last_ok": time.time() if ok else prev.get("last_ok"),
+        "error": "" if ok else str(err)[:120],
+    }
+
+
 def _get(url, fallback, name):
     """Uses requests rather than urllib. The python.org macOS build ships
     without a wired-up CA bundle, so urllib fails every HTTPS call with
@@ -970,8 +1025,11 @@ def _get(url, fallback, name):
                 return json.load(f)
         r = requests.get(url, timeout=10)
         r.raise_for_status()
-        return r.json()
+        doc = r.json()
+        note_health(name, True)
+        return doc
     except Exception as e:
+        note_health(name, False, e)
         # No demo fallback in production — the caller decides between last
         # known good and an explicit offline state.
         print(f"{name} fetch failed ({e})", file=sys.stderr)
@@ -1016,6 +1074,7 @@ def snapshot(dirt, bath, wx, path=None):
                     if k not in ("nascar", "radar")},
         "nascar": wx.get("nascar") or {},
         "radar": wx.get("radar") or {},
+        "health": HEALTH,
         "jellyfin": {k: v for k, v in bath.items() if k != "art"},
     }
     doc["weather"]["sky"] = sky_name(wx.get("code", 0)) if "code" in wx else None
@@ -1201,7 +1260,9 @@ def _day_name(iso):
     return dt.date(y, m, d).strftime("%a").upper()
 
 
-def brightness_now():
+def brightness_now(override="auto"):
+    if override != "auto":
+        return int(override)
     h = dt.datetime.now().hour
     return NIGHT_BRIGHTNESS if (h >= NIGHT_START or h < NIGHT_END) else DAY_BRIGHTNESS
 
@@ -1226,9 +1287,34 @@ def connect():
     return Pixoo(PIXOO_IP)
 
 
-def push(dev, img):
-    dev.set_brightness(brightness_now())
+MIRROR_EVERY = 2.0          # seconds; animated screens push ~5x that fast
+_last_mirror = [0.0]
+
+
+def mirror(img):
+    """Save what was just pushed so the control panel can show the board.
+
+    Rate-limited: an animated screen pushes five frames a second and writing
+    every one would be pointless disk churn for a page that polls once a
+    second anyway.
+    """
+    if time.time() - _last_mirror[0] < MIRROR_EVERY:
+        return
+    _last_mirror[0] = time.time()
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        path = os.path.join(DATA_DIR, "frame.png")
+        tmp = path + ".tmp"
+        img.resize((256, 256), Image.NEAREST).save(tmp)
+        os.replace(tmp, path)
+    except Exception:
+        pass                    # a mirror failure must never stop the board
+
+
+def push(dev, img, bright="auto"):
+    dev.set_brightness(brightness_now(bright))
     dev.push_image(img)
+    mirror(img)
 
 
 def main():
@@ -1284,9 +1370,28 @@ def main():
         dirt, bath, wx, cal = fetch()
         last_fetch = time.time()
         last_state = dirt.get("state")
+        last_cmd = [0]
 
         while True:
-            for name, dwell in rotation():
+            cfg = settings()
+
+            # A command is a one-shot: acted on once, then remembered by id so
+            # the next rotation doesn't fire it again.
+            if cfg["command_id"] and cfg["command_id"] != last_cmd[0]:
+                last_cmd[0] = cfg["command_id"]
+                if cfg["command"] == "refresh":
+                    last_fetch = 0          # forces a fetch on the next slice
+                elif cfg["command"] == "restart":
+                    print("restart requested from control panel",
+                          file=sys.stderr)
+                    return                  # systemd brings it straight back
+
+            allowed = cfg["screens"]
+            order = ([(cfg["pin"], 30)] if cfg["pin"] else rotation())
+
+            for name, dwell in order:
+                if allowed is not None and not cfg["pin"] and name not in allowed:
+                    continue
                 # Jellyfin is a LAN call, so refresh it every step rather than
                 # on the remote poll. Playback shows up within a few seconds.
                 bath = fetch_jellyfin()
@@ -1305,7 +1410,7 @@ def main():
                     run = dwell
                     if got and needs_marquee(name, dirt, bath, wx):
                         run = marquee_seconds(got[0], got[1], dwell)
-                    dev.set_brightness(brightness_now())
+                    dev.set_brightness(brightness_now(cfg["brightness"]))
                     steps = int(run / MARQUEE_STEP)
                     for i in range(steps):
                         dev.push_image(SCREENS[name](dirt, bath, wx, cal,
@@ -1313,7 +1418,8 @@ def main():
                         time.sleep(MARQUEE_STEP)
                     continue
 
-                push(dev, SCREENS[name](dirt, bath, wx, cal))
+                push(dev, SCREENS[name](dirt, bath, wx, cal),
+                     cfg["brightness"])
 
                 # Sleep in slices rather than one long block, so a state
                 # change can cut in instead of waiting out the dwell.
@@ -1335,7 +1441,8 @@ def main():
 
                     # something changed — show it now, whatever screen is up
                     last_state = state
-                    push(dev, SCREENS["flag"](dirt, bath, wx, cal))
+                    push(dev, SCREENS["flag"](dirt, bath, wx, cal),
+                         cfg["brightness"])
                     time.sleep(20)
                     waited = dwell
 

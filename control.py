@@ -487,6 +487,11 @@ class Handler(BaseHTTPRequestHandler):
         cfg = load()
         action = form.get("do", "save")
 
+        # Logged so `journalctl -u control` shows exactly which fields the
+        # browser submitted. A checkbox that never arrives and one that
+        # arrives unchecked look identical in the saved file.
+        print("POST %s fields=%s" % (action, sorted(form)), flush=True)
+
         if action == "save":
             cfg["screens"] = {k: (k in form) for k in KEYS}
             if not any(cfg["screens"].values()):

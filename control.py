@@ -44,8 +44,16 @@ SCREENS = [
 ]
 KEYS = [k for k, _l, _d in SCREENS]
 
+DWELL_MIN, DWELL_MAX = 4, 90
+# Matches board.py's time-of-day plan for a normal afternoon; the slider only
+# writes a value once you move it, so untouched screens keep following the
+# race-night / morning schedules.
+DWELL_HINT = {"flag": 14, "weather": 14, "nascar": 12, "podium": 10,
+              "photo": 12, "jellyfin": 18}
+
 DEFAULTS = {"screens": {k: True for k in KEYS}, "pin": None,
-            "brightness": "auto", "command": None, "command_id": 0}
+            "brightness": "auto", "dwell": {}, "command": None,
+            "command_id": 0}
 
 
 def load():
@@ -60,6 +68,9 @@ def load():
     out["pin"] = saved.get("pin") if saved.get("pin") in KEYS else None
     b = saved.get("brightness", "auto")
     out["brightness"] = b if (b == "auto" or isinstance(b, (int, float))) else "auto"
+    dw = saved.get("dwell")
+    out["dwell"] = {k: int(v) for k, v in (dw or {}).items()
+                    if k in KEYS and str(v).isdigit()}
     out["command_id"] = saved.get("command_id") or 0
     return out
 
@@ -321,6 +332,14 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 .pair button{margin-top:0}
 .note{color:var(--slate);font-size:13px;margin-top:18px;line-height:1.55}
 .flag{color:var(--sodium);font-size:12px;letter-spacing:.16em}
+
+/* Dwell slider, one per screen */
+.dwell{display:flex;align-items:center;gap:12px;margin-top:10px;
+       padding-top:10px;border-top:1px solid var(--rail)}
+.dwell input{flex:1;accent-color:var(--sodium);height:22px}
+.dval{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--slate);
+      min-width:3.4em;text-align:right;letter-spacing:.06em}
+.card:has(input[type=checkbox]:not(:checked)) .dwell{opacity:.35}
 
 /* Photo editor */
 .edhead{display:flex;gap:10px;align-items:baseline;margin:14px 0 8px;
@@ -592,7 +611,16 @@ setInterval(() => {
   }
 
   form.addEventListener("change", e => {
-    if (e.target.matches("input[type=checkbox],input[type=radio]")) send();
+    if (e.target.matches("input[type=checkbox],input[type=radio],input[type=range]"))
+      send();
+  });
+
+  /* The number tracks the thumb while dragging; the save waits for release,
+     so one drag is one write rather than fifty. */
+  form.addEventListener("input", e => {
+    if (!e.target.matches("input[type=range][data-for]")) return;
+    const lab = document.getElementById("dv_" + e.target.dataset.for);
+    if (lab) lab.textContent = e.target.value + "s";
   });
 
   /* Pinning disables the on/off switches server-side; mirror that here so
@@ -614,6 +642,11 @@ ROW = """<div class="card"><div class="row">
   <div class="txt"><div class="name">{{LABEL}}</div><div class="desc">{{DESC}}</div></div>
   <label class="sw"><input type="checkbox" name="{{KEY}}" {{ON}} {{DIS}}>
     <span class="trk"></span><span class="knob"></span></label>
+</div>
+<div class="dwell">
+  <input type="range" name="d_{{KEY}}" min="{{DMIN}}" max="{{DMAX}}"
+         value="{{DVAL}}" data-for="{{KEY}}">
+  <span class="dval" id="dv_{{KEY}}">{{DVAL}}s</span>
 </div></div>"""
 
 CHIP = """<label class="chip"><input type="radio" name="{{GROUP}}" value="{{VAL}}" {{ON}}>
@@ -645,6 +678,8 @@ class Handler(BaseHTTPRequestHandler):
             ROW.replace("{{KEY}}", k).replace("{{LABEL}}", l).replace("{{DESC}}", d)
                .replace("{{ON}}", "checked" if cfg["screens"][k] else "")
                .replace("{{DIS}}", "disabled" if pinned else "")
+               .replace("{{DMIN}}", str(DWELL_MIN)).replace("{{DMAX}}", str(DWELL_MAX))
+               .replace("{{DVAL}}", str(cfg["dwell"].get(k, DWELL_HINT.get(k, 12))))
             for k, l, d in SCREENS)
 
         body = (PAGE.replace("{{ROWS}}", rows)
@@ -746,6 +781,11 @@ class Handler(BaseHTTPRequestHandler):
             cfg["screens"] = {k: (k in form) for k in KEYS}
             if not any(cfg["screens"].values()):
                 cfg["screens"]["flag"] = True   # a dark board reads as broken
+            cfg["dwell"] = {}
+            for k in KEYS:
+                v = form.get("d_" + k, "")
+                if v.isdigit():
+                    cfg["dwell"][k] = max(DWELL_MIN, min(DWELL_MAX, int(v)))
             cfg["pin"] = form.get("pin") or None
             b = form.get("brightness", "auto")
             cfg["brightness"] = b if b == "auto" else int(b)

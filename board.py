@@ -981,7 +981,7 @@ def settings():
     as a separate process in the first place.
     """
     d = {"screens": None, "pin": None, "brightness": "auto",
-         "command": None, "command_id": 0}
+         "dwell": {}, "command": None, "command_id": 0}
     try:
         with open(os.path.join(DATA_DIR, SCREENS_FILE)) as f:
             saved = json.load(f)
@@ -1005,6 +1005,12 @@ def settings():
     b = saved.get("brightness", "auto")
     if b == "auto" or (isinstance(b, (int, float)) and 0 <= b <= 100):
         d["brightness"] = b
+    dw = saved.get("dwell")
+    if isinstance(dw, dict):
+        d["dwell"] = {k: int(v) for k, v in dw.items()
+                      if k in SCREENS and str(v).isdigit()
+                      and DWELL_MIN <= int(v) <= DWELL_MAX}
+
     d["command"] = saved.get("command")
     d["command_id"] = saved.get("command_id") or 0
     return d
@@ -1014,18 +1020,33 @@ def enabled_screens():
     return settings()["screens"]
 
 
-def rotation(now=None):
+DWELL_MIN, DWELL_MAX = 4, 90
+
+
+def rotation(now=None, dwell=None):
     """(screen, seconds) pairs. Race nights hand most of the time to the
-    tracks; mornings lead with the sky; otherwise it spreads evenly."""
+    tracks; mornings lead with the sky; otherwise it spreads evenly.
+
+    `dwell` overrides individual screens from the control panel. Anything not
+    overridden keeps the time-of-day default, so setting one slider doesn't
+    flatten the rest.
+    """
     now = now or dt.datetime.now()
     if is_race_night(now):
-        return [("flag", 30), ("weather", 10), ("nascar", 8), ("photo", 8),
-            ("jellyfin", 16)]
-    if MORNING[0] <= now.hour < MORNING[1]:
-        return [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8),
-            ("photo", 10), ("jellyfin", 16)]
-    return [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10),
-            ("photo", 12), ("jellyfin", 18)]
+        plan = [("flag", 30), ("weather", 10), ("nascar", 8), ("photo", 8),
+                ("jellyfin", 16)]
+    elif MORNING[0] <= now.hour < MORNING[1]:
+        plan = [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8),
+                ("photo", 10), ("jellyfin", 16)]
+    else:
+        plan = [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10),
+                ("photo", 12), ("jellyfin", 18)]
+
+    # Clamped here as well as in settings(): rotation() is called directly
+    # from --once and the preview, which never go through the settings file.
+    over = dwell or {}
+    return [(name, max(DWELL_MIN, min(DWELL_MAX, int(over.get(name, secs)))))
+            for name, secs in plan]
 
 
 # ---------------------------------------------------------------- data
@@ -1440,7 +1461,8 @@ def main():
                     return                  # systemd brings it straight back
 
             allowed = cfg["screens"]
-            order = ([(cfg["pin"], 30)] if cfg["pin"] else rotation())
+            order = ([(cfg["pin"], cfg["dwell"].get(cfg["pin"], 30))]
+                     if cfg["pin"] else rotation(dwell=cfg["dwell"]))
 
             for name, dwell in order:
                 if allowed is not None and not cfg["pin"] and name not in allowed:
@@ -1466,6 +1488,9 @@ def main():
                     got = scrolling_text(name, dirt, bath, wx)
                     run = dwell
                     if got and needs_marquee(name, dirt, bath, wx):
+                        # For scrolling text the setting is a floor, not a
+                        # ceiling: cutting a title off mid-word to honour a
+                        # slider is worse than running a second or two long.
                         run = marquee_seconds(got[0], got[1], dwell)
                     dev.set_brightness(brightness_now(cfg["brightness"]))
                     steps = int(run / MARQUEE_STEP)

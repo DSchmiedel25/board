@@ -1289,6 +1289,7 @@ def connect():
 
 MIRROR_EVERY = 2.0          # seconds; animated screens push ~5x that fast
 _last_mirror = [0.0]
+_mirror_warned = [False]
 
 
 def mirror(img):
@@ -1305,10 +1306,17 @@ def mirror(img):
         os.makedirs(DATA_DIR, exist_ok=True)
         path = os.path.join(DATA_DIR, "frame.png")
         tmp = path + ".tmp"
-        img.resize((256, 256), Image.NEAREST).save(tmp)
+        # format is explicit: the temp name ends in .tmp and PIL refuses to
+        # guess a format from an unknown extension
+        img.resize((256, 256), Image.NEAREST).save(tmp, format="PNG")
         os.replace(tmp, path)
-    except Exception:
-        pass                    # a mirror failure must never stop the board
+    except Exception as e:
+        # Never fatal — but say so once, or a missing preview looks like the
+        # feature was never wired up at all.
+        if not _mirror_warned[0]:
+            _mirror_warned[0] = True
+            print("mirror failed (%s): %s" % (type(e).__name__, e),
+                  file=sys.stderr)
 
 
 def push(dev, img, bright="auto"):
@@ -1413,8 +1421,10 @@ def main():
                     dev.set_brightness(brightness_now(cfg["brightness"]))
                     steps = int(run / MARQUEE_STEP)
                     for i in range(steps):
-                        dev.push_image(SCREENS[name](dirt, bath, wx, cal,
-                                                     phase=i * MARQUEE_PX))
+                        frame = SCREENS[name](dirt, bath, wx, cal,
+                                              phase=i * MARQUEE_PX)
+                        dev.push_image(frame)
+                        mirror(frame)          # animated frames mirror too
                         time.sleep(MARQUEE_STEP)
                     continue
 

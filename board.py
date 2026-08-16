@@ -990,9 +990,16 @@ def settings():
     if not isinstance(saved, dict):
         return d
 
+    # A screen is on unless it was explicitly switched off. Building the set
+    # from only the keys present meant any screen added after the last save
+    # was invisible until the panel got saved again — which is how the photo
+    # screen never appeared.
     scr = saved.get("screens")
-    if isinstance(scr, dict) and any(scr.values()):
-        d["screens"] = {k for k, v in scr.items() if v}
+    if isinstance(scr, dict):
+        off = {k for k, v in scr.items() if not v}
+        keep = set(SCREENS) - off
+        if keep:
+            d["screens"] = keep
     if saved.get("pin") in SCREENS:
         d["pin"] = saved["pin"]
     b = saved.get("brightness", "auto")

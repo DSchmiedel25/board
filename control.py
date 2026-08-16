@@ -62,11 +62,20 @@ def load():
 
 
 def save(cfg):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    tmp = STATE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(cfg, f)
-    os.replace(tmp, STATE)          # atomic: board.py never reads half a file
+    """Returns an error string, or "" on success.
+
+    A failed write used to be invisible: the page re-rendered from the
+    unchanged file, so a switch appeared to flip itself back. Now it says so.
+    """
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cfg, f)
+        os.replace(tmp, STATE)      # atomic: board.py never reads half a file
+        return ""
+    except OSError as e:
+        return "%s: %s" % (type(e).__name__, e)
 
 
 # ---------------------------------------------------------------- photos
@@ -127,7 +136,17 @@ def save_photo(name, blob):
 
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0])[:40] or "photo"
     os.makedirs(PHOTO_DIR, exist_ok=True)
-    path = os.path.join(PHOTO_DIR, "%d_%s.png" % (time.time(), stem))
+
+    # Whole-second timestamps collide when several files arrive together, and
+    # the second upload silently replaced the first. Walk until the name is
+    # free instead.
+    base = "%d_%s" % (time.time(), stem)
+    path = os.path.join(PHOTO_DIR, base + ".png")
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(PHOTO_DIR, "%s_%d.png" % (base, n))
+        n += 1
+
     back.save(path, format="PNG")
     return path
 
@@ -184,6 +203,44 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
 body{background:var(--loam);color:var(--dust);padding:20px 18px 60px;
      font-family:"Barlow Condensed","Arial Narrow",Helvetica,Arial,sans-serif;
      font-size:18px;max-width:560px;margin:0 auto}
+
+/* One column on a phone. On anything wider the three groups sit side by
+   side rather than stretching a 560px ribbon down the middle of a monitor. */
+.wrap{display:grid;gap:0 26px}
+.col{min-width:0}
+/* Blocks are placed rather than flowed: the controls column is much taller
+   than the rest, so letting them stack in source order leaves a column of
+   dead space beside it. */
+@media (min-width:900px){
+  body{max-width:1500px;padding:28px 30px 60px;font-size:17px}
+  h1{font-size:34px}
+  .wrap{align-items:start;
+        grid-template-columns:minmax(280px,360px) minmax(320px,1fr);
+        grid-template-areas:"mir ctl" "pho ctl" "src ctl"}
+  .c-mir{grid-area:mir} .c-ctl{grid-area:ctl}
+  .c-pho{grid-area:pho} .c-src{grid-area:src}
+  .c-mir h2:first-child,.c-ctl h2:first-child{margin-top:0}
+  .mirwrap{position:sticky;top:20px}   /* board stays in view while scrolling */
+  #mirror{width:290px;height:290px}
+}
+@media (min-width:1280px){
+  .wrap{grid-template-columns:minmax(300px,380px) minmax(320px,1fr) minmax(300px,26rem);
+        grid-template-areas:"mir ctl pho" "src ctl pho"}
+  .c-pho h2:first-child{margin-top:0}
+  .gal{grid-template-columns:repeat(5,1fr)}
+}
+@media (hover:hover){
+  .card{transition:background .15s}
+  .row:hover{cursor:default}
+  button:hover{filter:brightness(1.08)}
+  .chip span:hover{background:var(--rail);color:var(--dust)}
+  .chip input:checked + span:hover{background:var(--sodium);color:#12100c}
+  .filebtn:hover{background:var(--rail)}
+  .shot button{opacity:0;transition:opacity .15s}
+  .shot:hover button{opacity:1}
+}
+/* Touch has no hover, so the delete buttons must always be visible there */
+@media (hover:none){.shot button{opacity:1}}
 h1{font-size:30px;letter-spacing:.06em;text-transform:uppercase}
 h2{font-size:15px;letter-spacing:.2em;text-transform:uppercase;color:var(--slate);
    margin:26px 0 10px;font-family:ui-monospace,Menlo,monospace;font-weight:400}
@@ -253,12 +310,16 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 <h1>Board control</h1>
 <div class="sub">{{STATUS}}</div>
 
+<div class="wrap">
+<div class="col c-mir">
 <div class="card mirwrap">
   <img id="mirror" src="frame.png" alt="live board">
   <div class="sub" style="margin-top:10px">Live &middot; refreshes every 2s</div>
 </div>
 
-<form method="post">
+</div>
+
+<form method="post" class="col c-ctl">
 <h2>Screens</h2>
 {{ROWS}}
 
@@ -273,8 +334,10 @@ button.ghost{background:var(--sunk);color:var(--dust)}
   <button class="ghost" type="submit" name="do" value="refresh">Refresh data</button>
   <button class="ghost" type="submit" name="do" value="restart">Restart board</button>
 </div>
+
 </form>
 
+<div class="col c-pho">
 <h2>Photos</h2>
 <div class="card">
   <form method="post" enctype="multipart/form-data" action="/upload">
@@ -284,13 +347,17 @@ button.ghost{background:var(--sunk);color:var(--dust)}
   </form>
   <div class="gal">{{GALLERY}}</div>
 </div>
+</div>
 
+<div class="col c-src">
 <h2>Sources</h2>
 <div class="card">{{HEALTH}}</div>
 
 <p class="note">Changes land within one screen. Holding a screen ignores the
 rotation and the on/off switches until you set it back to Off. Turning every
 screen off leaves DirtCheck on — a blank board looks broken rather than off.</p>
+</div>
+</div>
 
 <script>
 /* Cache-bust the mirror; the file is rewritten in place every couple of
@@ -433,8 +500,8 @@ class Handler(BaseHTTPRequestHandler):
             cfg["command_id"] = int(time.time())
             msg = "Refreshing" if action == "refresh" else "Restarting board"
 
-        save(cfg)
-        self._page(msg)
+        err = save(cfg)
+        self._page(("Could not save &mdash; " + err) if err else msg)
 
     def log_message(self, *a):
         pass

@@ -1,0 +1,234 @@
+--- /mnt/user-data/uploads/board-main/board.py	2026-08-16 20:54:48.657479943 +0000
++++ board.py	2026-08-16 20:59:09.533475376 +0000
+@@ -34,6 +34,7 @@
+ from config import (
+     PIXOO_IP, LAT, LON, DIRTCHECK_BASE, DATA_DIR,
+     JELLYFIN_URL, JELLYFIN_KEY, JELLYFIN_USER,
++    PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN,
+     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
+     MORNING, RACE_DAYS, RACE_WINDOW,
+ )
+@@ -947,6 +948,103 @@
+     return img
+ 
+ 
++# ---------------------------------------------------------------- pi-hole
++
++# Blocked keeps SODIUM, the same amber the board already uses for "something
++# is being held back". Allowed needs a hue that survives colourblindness next
++# to it — blue/amber separates at dE 25 protan / 27 tritan, where the obvious
++# red/green pair collapses into one colour for about 1 in 12 men.
++PH_ALLOW = (46, 150, 216)
++
++
++def ph_short(n):
++    n = int(n)
++    if n >= 1_000_000:
++        return f"{n/1e6:.1f}M"
++    if n >= 10_000:
++        return f"{n/1000:.0f}K"
++    if n >= 1_000:
++        return f"{n/1000:.1f}K"
++    return str(n)
++
++
++def ph_bar(ph):
++    """The bar answers 'is DNS actually protecting the house right now'. That
++    is a different question from 'how much did it block today', which is what
++    the big number underneath is for — a paused Pi-hole still shows a healthy
++    percentage from earlier in the day, and the bar is what catches it."""
++    if not ph.get("enabled", True):
++        return YELLOW, LOAM, "PAUSED"
++    return GREEN, LOAM, "BLOCKING"
++
++
++def ph_graph(d, history, top, bottom):
++    """24h of queries, blocked stacked at the baseline. Resampled to whatever
++    column count fits rather than assuming Pi-hole's bucket size."""
++    if not history:
++        return
++    h = bottom - top + 1
++    n = len(history)
++    cols = []
++    for x in range(64):
++        lo = x * n // 64
++        hi = max(lo + 1, (x + 1) * n // 64)
++        cols.append((sum(t for t, _ in history[lo:hi]),
++                     sum(b for _, b in history[lo:hi])))
++    peak = max((c[0] for c in cols), default=0) or 1
++
++    for x, (tot, blk) in enumerate(cols):
++        if tot <= 0:
++            continue
++        bar = max(1, round(tot / peak * h))
++        blk_h = min(bar, round(blk / peak * h)) if blk else 0
++        allow_h = bar - blk_h
++        y = bottom
++        for _ in range(blk_h):
++            d.point((x, y), fill=SODIUM)
++            y -= 1
++        # A row of background between the two segments so they read as stacked
++        # rather than as one bar, but only when both can spare it. At 12px tall
++        # that is the most separation available.
++        if blk_h >= 2 and allow_h >= 2:
++            y -= 1
++            allow_h -= 1
++        for _ in range(max(0, allow_h)):
++            d.point((x, y), fill=PH_ALLOW)
++            y -= 1
++
++
++def screen_pihole(dirt, bath, wx, cal, phase=0):
++    """What the house's DNS did today. The footer carries the top blocked
++    domain, which is the part that actually tells you something new — it is
++    how you notice a device that started phoning somewhere."""
++    ph = (wx or {}).get("pihole") or {}
++    status = ph.get("status", "UNKNOWN")
++    if status in ("OFFLINE", "UNKNOWN") or "pct" not in ph:
++        return draw_unavailable(*canvas(), "PI-HOLE", status)
++
++    img, d = canvas()
++    c, tc, word = ph_bar(ph)
++    draw_bar(d, c, word, tc)
++
++    pct = f"{ph['pct']:.0f}%"
++    draw_centered(d, pct, 19, SODIUM, min(3, fit_scale(pct, 3)))
++
++    q = f"Q {ph_short(ph.get('total', 0))}"
++    b = f"B {ph_short(ph.get('blocked', 0))}"
++    # Q and B wear the same colours as the graph below, which is what lets this
++    # row serve as the legend. 64px leaves no room for a real one.
++    draw_text(d, q, 2, 36, PH_ALLOW, 1)
++    draw_text(d, b, 62 - text_width(b, 1), 36, SODIUM, 1)
++
++    ph_graph(d, ph.get("history") or [], 42, 56)
++
++    note = stale_note(status)
++    draw_footer(img, note or ph.get("top", ""), phase,
++                SODIUM if note else SLATE)
++    return img
++
++
+ SCREENS = {
+     "flag": screen_flag,
+     "weather": screen_weather,
+@@ -954,6 +1052,7 @@
+     "nascar": screen_nascar,
+     "podium": screen_podium,
+     "photo": screen_photo,
++    "pihole": screen_pihole,
+ }
+ 
+ 
+@@ -1034,13 +1133,13 @@
+     now = now or dt.datetime.now()
+     if is_race_night(now):
+         plan = [("flag", 30), ("weather", 10), ("nascar", 8), ("photo", 8),
+-                ("jellyfin", 16)]
++                ("jellyfin", 16), ("pihole", 6)]
+     elif MORNING[0] <= now.hour < MORNING[1]:
+         plan = [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8),
+-                ("photo", 10), ("jellyfin", 16)]
++                ("photo", 10), ("jellyfin", 16), ("pihole", 8)]
+     else:
+         plan = [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10),
+-                ("photo", 12), ("jellyfin", 18)]
++                ("photo", 12), ("jellyfin", 18), ("pihole", 10)]
+ 
+     # Clamped here as well as in settings(): rotation() is called directly
+     # from --once and the preview, which never go through the settings file.
+@@ -1226,12 +1325,36 @@
+         wx["nascar"] = keep_podium(_nascar.build(raw_n, get=_get))
+     if radar:
+         wx["radar"] = radar
++    wx["pihole"] = fetch_pihole()
+ 
+     snapshot(dirt, bath, wx)
+ 
+     return dirt, bath, wx, {}
+ 
+ 
++def fetch_pihole():
++    """Split out like fetch_jellyfin for the same reason — it's a box on this
++    LAN, cheap enough to hit every rotation, so pausing blocking shows on the
++    board in seconds instead of at the next remote poll."""
++    if not PIHOLE_HOST:
++        return {"status": "UNKNOWN"}
++    try:
++        import pihole as _pihole
++        got = _pihole.build(PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN)
++    except Exception:
++        got = None
++    if got:
++        got["status"] = "OK"
++        remember("pihole", got)
++        return got
++    # Same rule as DirtCheck: never invent numbers. Last known good, aged
++    # honestly, or an explicit offline state.
++    cached, state = recall("pihole")
++    out = dict(cached) if cached else {}
++    out["status"] = state
++    return out
++
++
+ def fetch_jellyfin():
+     """Split out from fetch() because it's a call to a box on the same LAN —
+     cheap enough to run every rotation step, so the screen appears within
+--- /mnt/user-data/uploads/board-main/config.py	2026-08-16 20:54:29.657480276 +0000
++++ config.py	2026-08-16 20:57:57.229476642 +0000
+@@ -66,6 +66,12 @@
+ JELLYFIN_KEY = ""
+ ICS_URL = ""
+ 
++# Pi-hole. Leave PIHOLE_HOST empty to drop the screen from the rotation.
++# On v6 with no password set, no credential is needed — the API is open.
++PIHOLE_HOST = ""
++PIHOLE_PASSWORD = ""
++PIHOLE_TOKEN = ""                     # v5 only
++
+ try:
+     from local_config import *          # noqa: F401,F403  (overrides above)
+ except ImportError:
+--- /mnt/user-data/uploads/board-main/local_config.example.py	2026-08-16 20:54:30.473480262 +0000
++++ local_config.example.py	2026-08-16 20:59:16.681475250 +0000
+@@ -15,6 +15,14 @@
+ JELLYFIN_URL = "http://localhost:8096"
+ JELLYFIN_KEY = ""
+ 
++# Pi-hole. Address of the box running it. Leave blank to drop the screen from
++# the rotation entirely. On v6 with no web password set, no credential is
++# needed — the API is open. Set PIHOLE_PASSWORD to an app password if you add
++# one later (Settings -> Web interface / API -> Configure app password).
++PIHOLE_HOST = "192.168.1.202"
++PIHOLE_PASSWORD = ""
++PIHOLE_TOKEN = ""                # v5 only
++
+ # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
+ # Calendar -> copy link, then change webcal:// to https://
+ # Leave blank if you don't use the calendar.
+--- /mnt/user-data/uploads/board-main/README.md	2026-08-16 20:54:29.761480274 +0000
++++ README.md	2026-08-16 20:59:46.393474730 +0000
+@@ -58,6 +58,7 @@
+ | --- | --- |
+ | `PIXOO_IP` | Divoom app → your device → settings |
+ | `ICS_URL` | Pi only. Apple Calendar → right-click calendar → Share Calendar → Public Calendar, then change `webcal://` to `https://`. Not needed on a Mac. |
++| `PIHOLE_HOST` | Optional. Address of the Pi-hole box. Blank drops the screen from the rotation. No credential needed on v6 with no web password set. |
+ 
+ Give the Pixoo a DHCP reservation in your router so its IP doesn't move.
+ 
+@@ -121,6 +122,7 @@
+ | `board.py` | Draws and pushes the Pixoo-64 screens |
+ | `dirtcall.py` | Reads DirtCheck's events + status into flag state and track rows |
+ | `bathroom.py` | Reads BathroomReport's GA4 + Clarity analytics |
++| `pihole.py` | Reads Pi-hole v6/v5 stats into the shape the screen wants |
+ | `nextevent.py` | Expands recurring events from a published .ics (Pi) |
+ | `nextevent-mac.py` | Reads Calendar.app directly via EventKit (Mac) |
+ |  `fetch.py` | Pulls RSS feeds past CORS |
+@@ -136,6 +138,7 @@
+ | `weather` | high/low, temp, rain and wind | sky condition with a pixel sprite |
+ | `traffic` | active users and new users | direction against yesterday |
+ | `health` | engagement seconds and bot sessions | error count, or `NO ERRORS` |
++| `pihole` | share of DNS blocked today, queries vs blocked, 24h sparkline | `BLOCKING`, or `PAUSED` when blocking is off |
+ 
+ Track and weather screens use a warm dark palette; the two BathroomReport
+ screens use that project's own navy and teal so they read as a different place.

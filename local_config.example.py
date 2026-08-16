@@ -15,6 +15,14 @@ PIXOO_IP = "192.168.1.xxx"
 JELLYFIN_URL = "http://localhost:8096"
 JELLYFIN_KEY = ""
 
+# Pi-hole. Address of the box running it. Leave blank to drop the screen from
+# the rotation entirely. On v6 with no web password set, no credential is
+# needed — the API is open. Set PIHOLE_PASSWORD to an app password if you add
+# one later (Settings -> Web interface / API -> Configure app password).
+PIHOLE_HOST = "192.168.1.202"
+PIHOLE_PASSWORD = ""
+PIHOLE_TOKEN = ""                # v5 only
+
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
 # Calendar -> copy link, then change webcal:// to https://
 # Leave blank if you don't use the calendar.

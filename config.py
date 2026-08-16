@@ -66,6 +66,12 @@ JELLYFIN_URL = "http://localhost:8096"
 JELLYFIN_KEY = ""
 ICS_URL = ""
 
+# Pi-hole. Leave PIHOLE_HOST empty to drop the screen from the rotation.
+# On v6 with no password set, no credential is needed — the API is open.
+PIHOLE_HOST = ""
+PIHOLE_PASSWORD = ""
+PIHOLE_TOKEN = ""                     # v5 only
+
 try:
     from local_config import *          # noqa: F401,F403  (overrides above)
 except ImportError:

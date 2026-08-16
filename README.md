@@ -58,6 +58,7 @@ The two values that must be right before anything works:
 | --- | --- |
 | `PIXOO_IP` | Divoom app → your device → settings |
 | `ICS_URL` | Pi only. Apple Calendar → right-click calendar → Share Calendar → Public Calendar, then change `webcal://` to `https://`. Not needed on a Mac. |
+| `PIHOLE_HOST` | Optional. Address of the Pi-hole box. Blank drops the screen from the rotation. No credential needed on v6 with no web password set. |
 
 Give the Pixoo a DHCP reservation in your router so its IP doesn't move.
 
@@ -121,6 +122,7 @@ launchctl bootout gui/$(id -u)/com.board.pixoo        # stop
 | `board.py` | Draws and pushes the Pixoo-64 screens |
 | `dirtcall.py` | Reads DirtCheck's events + status into flag state and track rows |
 | `bathroom.py` | Reads BathroomReport's GA4 + Clarity analytics |
+| `pihole.py` | Reads Pi-hole v6/v5 stats into the shape the screen wants |
 | `nextevent.py` | Expands recurring events from a published .ics (Pi) |
 | `nextevent-mac.py` | Reads Calendar.app directly via EventKit (Mac) |
 |  `fetch.py` | Pulls RSS feeds past CORS |
@@ -136,6 +138,7 @@ launchctl bootout gui/$(id -u)/com.board.pixoo        # stop
 | `weather` | high/low, temp, rain and wind | sky condition with a pixel sprite |
 | `traffic` | active users and new users | direction against yesterday |
 | `health` | engagement seconds and bot sessions | error count, or `NO ERRORS` |
+| `pihole` | share of DNS blocked today, queries vs blocked, 24h sparkline | `BLOCKING`, or `PAUSED` when blocking is off |
 
 Track and weather screens use a warm dark palette; the two BathroomReport
 screens use that project's own navy and teal so they read as a different place.

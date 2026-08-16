@@ -34,6 +34,7 @@ from PIL import Image, ImageDraw
 from config import (
     PIXOO_IP, LAT, LON, DIRTCHECK_BASE, DATA_DIR,
     JELLYFIN_URL, JELLYFIN_KEY, JELLYFIN_USER,
+    PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN,
     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
     MORNING, RACE_DAYS, RACE_WINDOW,
 )
@@ -947,6 +948,103 @@ def screen_nascar(dirt, bath, wx, cal, phase=0):
     return img
 
 
+# ---------------------------------------------------------------- pi-hole
+
+# Blocked keeps SODIUM, the same amber the board already uses for "something
+# is being held back". Allowed needs a hue that survives colourblindness next
+# to it — blue/amber separates at dE 25 protan / 27 tritan, where the obvious
+# red/green pair collapses into one colour for about 1 in 12 men.
+PH_ALLOW = (46, 150, 216)
+
+
+def ph_short(n):
+    n = int(n)
+    if n >= 1_000_000:
+        return f"{n/1e6:.1f}M"
+    if n >= 10_000:
+        return f"{n/1000:.0f}K"
+    if n >= 1_000:
+        return f"{n/1000:.1f}K"
+    return str(n)
+
+
+def ph_bar(ph):
+    """The bar answers 'is DNS actually protecting the house right now'. That
+    is a different question from 'how much did it block today', which is what
+    the big number underneath is for — a paused Pi-hole still shows a healthy
+    percentage from earlier in the day, and the bar is what catches it."""
+    if not ph.get("enabled", True):
+        return YELLOW, LOAM, "PAUSED"
+    return GREEN, LOAM, "BLOCKING"
+
+
+def ph_graph(d, history, top, bottom):
+    """24h of queries, blocked stacked at the baseline. Resampled to whatever
+    column count fits rather than assuming Pi-hole's bucket size."""
+    if not history:
+        return
+    h = bottom - top + 1
+    n = len(history)
+    cols = []
+    for x in range(64):
+        lo = x * n // 64
+        hi = max(lo + 1, (x + 1) * n // 64)
+        cols.append((sum(t for t, _ in history[lo:hi]),
+                     sum(b for _, b in history[lo:hi])))
+    peak = max((c[0] for c in cols), default=0) or 1
+
+    for x, (tot, blk) in enumerate(cols):
+        if tot <= 0:
+            continue
+        bar = max(1, round(tot / peak * h))
+        blk_h = min(bar, round(blk / peak * h)) if blk else 0
+        allow_h = bar - blk_h
+        y = bottom
+        for _ in range(blk_h):
+            d.point((x, y), fill=SODIUM)
+            y -= 1
+        # A row of background between the two segments so they read as stacked
+        # rather than as one bar, but only when both can spare it. At 12px tall
+        # that is the most separation available.
+        if blk_h >= 2 and allow_h >= 2:
+            y -= 1
+            allow_h -= 1
+        for _ in range(max(0, allow_h)):
+            d.point((x, y), fill=PH_ALLOW)
+            y -= 1
+
+
+def screen_pihole(dirt, bath, wx, cal, phase=0):
+    """What the house's DNS did today. The footer carries the top blocked
+    domain, which is the part that actually tells you something new — it is
+    how you notice a device that started phoning somewhere."""
+    ph = (wx or {}).get("pihole") or {}
+    status = ph.get("status", "UNKNOWN")
+    if status in ("OFFLINE", "UNKNOWN") or "pct" not in ph:
+        return draw_unavailable(*canvas(), "PI-HOLE", status)
+
+    img, d = canvas()
+    c, tc, word = ph_bar(ph)
+    draw_bar(d, c, word, tc)
+
+    pct = f"{ph['pct']:.0f}%"
+    draw_centered(d, pct, 19, SODIUM, min(3, fit_scale(pct, 3)))
+
+    q = f"Q {ph_short(ph.get('total', 0))}"
+    b = f"B {ph_short(ph.get('blocked', 0))}"
+    # Q and B wear the same colours as the graph below, which is what lets this
+    # row serve as the legend. 64px leaves no room for a real one.
+    draw_text(d, q, 2, 36, PH_ALLOW, 1)
+    draw_text(d, b, 62 - text_width(b, 1), 36, SODIUM, 1)
+
+    ph_graph(d, ph.get("history") or [], 42, 56)
+
+    note = stale_note(status)
+    draw_footer(img, note or ph.get("top", ""), phase,
+                SODIUM if note else SLATE)
+    return img
+
+
 SCREENS = {
     "flag": screen_flag,
     "weather": screen_weather,
@@ -954,6 +1052,7 @@ SCREENS = {
     "nascar": screen_nascar,
     "podium": screen_podium,
     "photo": screen_photo,
+    "pihole": screen_pihole,
 }
 
 
@@ -1034,13 +1133,13 @@ def rotation(now=None, dwell=None):
     now = now or dt.datetime.now()
     if is_race_night(now):
         plan = [("flag", 30), ("weather", 10), ("nascar", 8), ("photo", 8),
-                ("jellyfin", 16)]
+                ("jellyfin", 16), ("pihole", 6)]
     elif MORNING[0] <= now.hour < MORNING[1]:
         plan = [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8),
-                ("photo", 10), ("jellyfin", 16)]
+                ("photo", 10), ("jellyfin", 16), ("pihole", 8)]
     else:
         plan = [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10),
-                ("photo", 12), ("jellyfin", 18)]
+                ("photo", 12), ("jellyfin", 18), ("pihole", 10)]
 
     # Clamped here as well as in settings(): rotation() is called directly
     # from --once and the preview, which never go through the settings file.
@@ -1226,10 +1325,34 @@ def fetch():
         wx["nascar"] = keep_podium(_nascar.build(raw_n, get=_get))
     if radar:
         wx["radar"] = radar
+    wx["pihole"] = fetch_pihole()
 
     snapshot(dirt, bath, wx)
 
     return dirt, bath, wx, {}
+
+
+def fetch_pihole():
+    """Split out like fetch_jellyfin for the same reason — it's a box on this
+    LAN, cheap enough to hit every rotation, so pausing blocking shows on the
+    board in seconds instead of at the next remote poll."""
+    if not PIHOLE_HOST:
+        return {"status": "UNKNOWN"}
+    try:
+        import pihole as _pihole
+        got = _pihole.build(PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN)
+    except Exception:
+        got = None
+    if got:
+        got["status"] = "OK"
+        remember("pihole", got)
+        return got
+    # Same rule as DirtCheck: never invent numbers. Last known good, aged
+    # honestly, or an explicit offline state.
+    cached, state = recall("pihole")
+    out = dict(cached) if cached else {}
+    out["status"] = state
+    return out
 
 
 def fetch_jellyfin():

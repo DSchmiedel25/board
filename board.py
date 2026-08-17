@@ -34,7 +34,6 @@ from PIL import Image, ImageDraw
 from config import (
     PIXOO_IP, LAT, LON, DIRTCHECK_BASE, DATA_DIR,
     JELLYFIN_URL, JELLYFIN_KEY, JELLYFIN_USER,
-    PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN,
     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
     MORNING, RACE_DAYS, RACE_WINDOW,
 )
@@ -91,6 +90,11 @@ DEMO_WX = {
     "temp": 68, "feels": 66, "high": 84, "low": 61,
     "code": 1, "wind": 7, "rain": 20,
     "days": [("SAT", 84, 61), ("SUN", 79, 58), ("MON", 71, 55)],
+    "services": {"rows": [{"name": "BATHROOMREPORT", "up": False, "uptime": 87.1},
+                          {"name": "JELLYFIN", "up": True, "uptime": 99.9},
+                          {"name": "PI-HOLE", "up": True, "uptime": 100.0},
+                          {"name": "INTERNET", "up": True, "uptime": 99.9}],
+                 "total": 4, "up": 3, "down": ["BATHROOMREPORT"], "ok": False},
     "nascar": {"live": False, "venue": "RICHMOND",
         "podium": {"venue": "IOWA", "top": [("1","GIBBS"),("2","BELL"),("3","BLANEY")]},
         "rows": [
@@ -702,6 +706,43 @@ def screen_photo(dirt, bath, wx, cal, phase=0):
     return img
 
 
+def screen_services(dirt, bath, wx, cal, phase=0):
+    """Service health. Green bar and a count when everything answers; red bar
+    naming what died when it doesn't — the failures are what you'd walk over
+    to read, so they sort to the top."""
+    svc = wx.get("services") or {}
+    img, d = canvas()
+
+    if svc.get("offline") or not svc.get("rows"):
+        draw_bar(d, RAIL, "NO KUMA", DUST)
+        draw_centered(d, "STATUS PAGE", 28, SLATE, 1)
+        draw_centered(d, "UNREACHABLE", 38, SLATE, 1)
+        return img
+
+    rows, down = svc["rows"], svc.get("down") or []
+    if down:
+        draw_bar(d, RED, "DOWN", DUST)
+    else:
+        draw_bar(d, GREEN, "ALL UP", LOAM)
+
+    if not down:
+        big = "%d/%d" % (svc["up"], svc["total"])
+        draw_centered(d, big, 24, GREEN, 3)
+        draw_footer(img, "SERVICES OK", phase)
+        return img
+
+    y = 21
+    for r in rows[:3]:
+        d.rectangle([0, y, 2, y + 8], fill=GREEN if r["up"] else RED)
+        draw_text(d, r["name"][:11], 6, y + 1, DUST if not r["up"] else SLATE, 1)
+        y += 12
+
+    extra = len(down) - min(3, len(rows))
+    draw_footer(img, "+%d MORE" % extra if extra > 0
+                else "%d/%d UP" % (svc["up"], svc["total"]), phase)
+    return img
+
+
 # ---------------------------------------------------------------- screens
 
 def screen_flag(dirt, bath, wx, cal, phase=0):
@@ -948,161 +989,6 @@ def screen_nascar(dirt, bath, wx, cal, phase=0):
     return img
 
 
-# ---------------------------------------------------------------- pi-hole
-
-# Blocked keeps SODIUM, the same amber the board already uses for "something
-# is being held back". Allowed needs a hue that survives colourblindness next
-# to it — blue/amber separates at dE 25 protan / 27 tritan, where the obvious
-# red/green pair collapses into one colour for about 1 in 12 men.
-PH_ALLOW = (46, 150, 216)
-
-
-def ph_short(n):
-    n = int(n)
-    if n >= 1_000_000:
-        return f"{n/1e6:.1f}M"
-    if n >= 10_000:
-        return f"{n/1000:.0f}K"
-    if n >= 1_000:
-        return f"{n/1000:.1f}K"
-    return str(n)
-
-
-def ph_graph(d, history, top, bottom):
-    """24h of queries, blocked stacked at the baseline. Resampled to whatever
-    column count fits rather than assuming Pi-hole's bucket size."""
-    if not history:
-        return
-    h = bottom - top + 1
-    n = len(history)
-    cols = []
-    for x in range(64):
-        lo = x * n // 64
-        hi = max(lo + 1, (x + 1) * n // 64)
-        cols.append((sum(t for t, _ in history[lo:hi]),
-                     sum(b for _, b in history[lo:hi])))
-    peak = max((c[0] for c in cols), default=0) or 1
-
-    for x, (tot, blk) in enumerate(cols):
-        if tot <= 0:
-            continue
-        bar = max(1, round(tot / peak * h))
-        blk_h = min(bar, round(blk / peak * h)) if blk else 0
-        allow_h = bar - blk_h
-        y = bottom
-        for _ in range(blk_h):
-            d.point((x, y), fill=SODIUM)
-            y -= 1
-        # A row of background between the two segments so they read as stacked
-        # rather than as one bar, but only when both can spare it. At 12px tall
-        # that is the most separation available.
-        if blk_h >= 2 and allow_h >= 2:
-            y -= 1
-            allow_h -= 1
-        for _ in range(max(0, allow_h)):
-            d.point((x, y), fill=PH_ALLOW)
-            y -= 1
-
-
-def ph_pair(d, x, y, label, value, vcol, right=False):
-    """Label in slate, value in colour. Two tones per row means the eye lands
-    on the number and reads the label only if it needs to."""
-    lw, vw = text_width(label, 1), text_width(value, 1)
-    if right:
-        x -= lw + (3 if label else 0) + vw
-    if label:
-        draw_text(d, label, x, y, SLATE, 1)
-        x += lw + 3
-    draw_text(d, value, x, y, vcol, 1)
-
-
-def ph_num(n, budget):
-    """Full digits with separators when they fit, abbreviated when they don't.
-    598 stays 598; 1,284,391 becomes 1.3M rather than running into the column
-    next to it. Precision is worth more than consistency at this size."""
-    s = commas(n)
-    return s if text_width(s, 1) <= budget else ph_short(n)
-
-
-def ph_row(d, y, llabel, lvalue, lcol, rlabel, rvalue, rcol):
-    """Right side is placed first and the left gets whatever is left over, so
-    a growing number degrades gracefully instead of overlapping."""
-    ph_pair(d, 62, y, rlabel, rvalue, rcol, right=True)
-    used = text_width(rlabel, 1) + (3 if rlabel else 0) + text_width(rvalue, 1)
-    budget = (62 - used - 3) - (2 + text_width(llabel, 1) + 3)
-    ph_pair(d, 2, y, llabel, lvalue(budget) if callable(lvalue) else lvalue, lcol)
-
-
-def ph_trim(s, px):
-    """Trim to fit, preferring a break at a separator — 'LIVING-ROOM' reads as
-    a name, 'LIVING-ROO' reads as a bug."""
-    if text_width(s, 1) <= px:
-        return s
-    while s and text_width(s, 1) > px:
-        s = s[:-1]
-    cut = max(s.rfind("-"), s.rfind("."), s.rfind("_"))
-    if cut >= len(s) - 3 and cut > 3:
-        s = s[:cut]
-    return s
-
-
-CLIENT_X1 = 47           # names end here
-CLIENT_BAR = (49, 62)    # frequency bar lives here
-
-
-def ph_clients(d, clients, y0, rows=4, step=7):
-    """Who is doing the talking. The bar is relative to the noisiest client,
-    not to the total — the question this answers is 'which box is chatty',
-    and against a total everything but the top one would be an invisible sliver."""
-    if not clients:
-        draw_text(d, "NO CLIENT DATA", 2, y0 + 7, SLATE, 1)
-        return
-    peak = max((c[1] for c in clients), default=0) or 1
-    for i, (name, count) in enumerate(clients[:rows]):
-        y = y0 + i * step
-        draw_text(d, ph_trim(name, CLIENT_X1 - 2), 2, y, DUST, 1)
-        x0, x1 = CLIENT_BAR
-        d.rectangle([x0, y + 1, x1, y + 3], fill=RAIL)
-        w = max(1, round(count / peak * (x1 - x0)))
-        d.rectangle([x0, y + 1, x0 + w, y + 3], fill=PH_ALLOW)
-
-
-def screen_pihole(dirt, bath, wx, cal, phase=0):
-    """Everything the Pi-hole dashboard's top row says, plus who is generating
-    the traffic and the shape of the last 24 hours — the three things you
-    cannot get from a single number."""
-    ph = (wx or {}).get("pihole") or {}
-    status = ph.get("status", "UNKNOWN")
-    if status in ("OFFLINE", "UNKNOWN") or "pct" not in ph:
-        return draw_unavailable(*canvas(), "PI-HOLE", status)
-
-    img, d = canvas()
-    on = ph.get("enabled", True)
-
-    # --- the four headline figures, laid out as two columns of pairs -------
-    ph_row(d, 1, "Q", lambda b: ph_num(ph.get("total", 0), b), PH_ALLOW,
-           "CLI", str(ph.get("clients", 0)), DUST)
-    ph_row(d, 8, "ADS", lambda b: ph_num(ph.get("blocked", 0), b), SODIUM,
-           "", f"{ph['pct']:.1f}%", SODIUM)
-    word = "ON" if on else "PAUSED"
-    ph_row(d, 15, "LIST", lambda b: ph_num(ph.get("gravity", 0), b), DUST,
-           "", word, GREEN if on else YELLOW)
-
-    d.line([0, 21, 63, 21], fill=RAIL)
-
-    # --- top clients ------------------------------------------------------
-    ph_clients(d, ph.get("top_clients") or [], 24)
-
-    # --- 24h shape --------------------------------------------------------
-    note = stale_note(status)
-    if note:
-        draw_text(d, note, 2, 53, SODIUM, 1)
-    else:
-        d.line([0, 51, 63, 51], fill=RAIL)
-        ph_graph(d, ph.get("history") or [], 53, 63)
-    return img
-
-
 SCREENS = {
     "flag": screen_flag,
     "weather": screen_weather,
@@ -1110,7 +996,7 @@ SCREENS = {
     "nascar": screen_nascar,
     "podium": screen_podium,
     "photo": screen_photo,
-    "pihole": screen_pihole,
+    "services": screen_services,
 }
 
 
@@ -1191,13 +1077,13 @@ def rotation(now=None, dwell=None):
     now = now or dt.datetime.now()
     if is_race_night(now):
         plan = [("flag", 30), ("weather", 10), ("nascar", 8), ("photo", 8),
-                ("jellyfin", 16), ("pihole", 6)]
+                ("services", 7), ("jellyfin", 16)]
     elif MORNING[0] <= now.hour < MORNING[1]:
         plan = [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8),
-                ("photo", 10), ("jellyfin", 16), ("pihole", 8)]
+                ("photo", 10), ("services", 8), ("jellyfin", 16)]
     else:
         plan = [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10),
-                ("photo", 12), ("jellyfin", 18), ("pihole", 10)]
+                ("photo", 12), ("services", 10), ("jellyfin", 18)]
 
     # Clamped here as well as in settings(): rotation() is called directly
     # from --once and the preview, which never go through the settings file.
@@ -1294,12 +1180,10 @@ def snapshot(dirt, bath, wx, path=None):
         "hour": dt.datetime.now().hour,
         "dirt": {k: v for k, v in dirt.items() if k != "art"},
         "weather": {k: v for k, v in wx.items()
-                    if k not in ("nascar", "radar", "pihole")},
+                    if k not in ("nascar", "radar", "services")},
         "nascar": wx.get("nascar") or {},
         "radar": wx.get("radar") or {},
-        # Rides in wx so the screens can reach it, but it is not weather —
-        # give the wall page a top-level key rather than making it dig.
-        "pihole": wx.get("pihole") or {},
+        "services": wx.get("services") or {},
         "health": HEALTH,
         "jellyfin": {k: v for k, v in bath.items() if k != "art"},
     }
@@ -1340,6 +1224,7 @@ def fetch():
     raw_w = _get(WEATHER_URL, None, "weather")
     raw_n = fetch_nascar()
     radar = fetch_radar()
+    svc = fetch_services()
 
     # NEVER fall back to demo data here. A demo Albany is green and racing,
     # so a failed fetch would put a confident "RACING" on the wall when the
@@ -1386,34 +1271,11 @@ def fetch():
         wx["nascar"] = keep_podium(_nascar.build(raw_n, get=_get))
     if radar:
         wx["radar"] = radar
-    wx["pihole"] = fetch_pihole()
+    wx["services"] = svc or {"offline": True}
 
     snapshot(dirt, bath, wx)
 
     return dirt, bath, wx, {}
-
-
-def fetch_pihole():
-    """Split out like fetch_jellyfin for the same reason — it's a box on this
-    LAN, cheap enough to hit every rotation, so pausing blocking shows on the
-    board in seconds instead of at the next remote poll."""
-    if not PIHOLE_HOST:
-        return {"status": "UNKNOWN"}
-    try:
-        import pihole as _pihole
-        got = _pihole.build(PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN)
-    except Exception:
-        got = None
-    if got:
-        got["status"] = "OK"
-        remember("pihole", got)
-        return got
-    # Same rule as DirtCheck: never invent numbers. Last known good, aged
-    # honestly, or an explicit offline state.
-    cached, state = recall("pihole")
-    out = dict(cached) if cached else {}
-    out["status"] = state
-    return out
 
 
 def fetch_jellyfin():
@@ -1468,6 +1330,18 @@ def keep_podium(nc):
     except (OSError, ValueError):
         pass
     return nc
+
+
+def fetch_services():
+    """Uptime Kuma via its public status page. Tries the single-call summary
+    endpoint first and falls back to the older config+heartbeat pair, since
+    summary arrived late and a Pi may be running an older build."""
+    import kuma
+    u = kuma.urls()
+    summary = _get(u["summary"], None, "services")
+    beat = _get(u["beat"], None, "services beat")
+    config = None if summary else _get(u["config"], None, "services config")
+    return kuma.build(summary=summary, config=config, beat=beat)
 
 
 def fetch_radar():
@@ -1605,7 +1479,7 @@ def main():
             SCREENS["flag"](dd, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)
-        for name in ("weather", "nascar", "podium", "photo", "jellyfin"):
+        for name in ("weather", "nascar", "podium", "photo", "services", "jellyfin"):
             SCREENS[name](dirt, bath, wx, cal).save(
                 os.path.join(args.preview, f"{name}.png"))
             print(name)

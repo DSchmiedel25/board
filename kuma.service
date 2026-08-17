@@ -1,0 +1,16 @@
+[Unit]
+Description=Uptime Kuma
+After=network-online.target
+
+[Service]
+Type=simple
+User=jellyfin
+WorkingDirectory=/home/jellyfin/uptime-kuma
+ExecStart=/usr/bin/node server/server.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+Environment=UPTIME_KUMA_PORT=3001
+
+[Install]
+WantedBy=multi-user.target

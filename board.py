@@ -80,16 +80,19 @@ DEMO_DIRT = {
     "countdown": "2:48",
     "label": "HOT LAPS",
     "rows": [
-        {"code": "AS",  "when": "NOW", "state": "racing", "prob": 5},
-        {"code": "LV",  "when": "SAT", "state": "dark",   "prob": 2},
-        {"code": "FON", "when": "SAT", "state": "dark",   "prob": 2},
+        {"code": "AS",  "when": "NOW", "state": "racing", "prob": 5,
+         "name": "Kids giveaway / weekly", "date": "2026-08-21"},
+        {"code": "LV",  "when": "NOW", "state": "watch",  "prob": 45,
+         "name": "Weekly + LaRochelle Memorial", "date": "2026-08-21"},
+        {"code": "FON", "when": "NOW", "state": "rained", "prob": 85,
+         "name": "Benjamin Moore Championship", "date": "2026-08-21"},
     ],
 }
 
 DEMO_WX = {
     "temp": 68, "feels": 66, "high": 84, "low": 61,
     "code": 1, "wind": 7, "rain": 20,
-    "days": [("SAT", 84, 61), ("SUN", 79, 58), ("MON", 71, 55)],
+    "days": [("SAT", 84, 61, 80), ("SUN", 79, 58, 20), ("MON", 71, 55, 5)],
     "services": {"rows": [{"name": "BATHROOMREPORT", "up": False, "uptime": 87.1},
                           {"name": "JELLYFIN", "up": True, "uptime": 99.9},
                           {"name": "PI-HOLE", "up": True, "uptime": 100.0},
@@ -425,6 +428,56 @@ def stale_note(status):
     return "" if status == "OK" else status
 
 
+HERO_CLOUD = ["......####......", "....########....", "..###########...",
+              ".##############.", "################", "################",
+              "################", ".##############."]
+
+HI_INK = (255, 186, 84)          # daily high
+LO_INK = (120, 186, 255)         # daily low / wet
+WET_INK = (120, 186, 255)
+
+
+def hero_cloud(d, x, y, col):
+    for r, row in enumerate(HERO_CLOUD):
+        for c, ch in enumerate(row):
+            if ch == "#":
+                d.point((x + c, y + r), fill=col)
+
+
+def hero_sun(d, cx, cy, col, phase):
+    """Disc plus eight rays that rotate slowly — the only motion a clear sky
+    has to offer, and enough to show the board is alive."""
+    d.ellipse([cx - 6, cy - 6, cx + 6, cy + 6], fill=col)
+    for i in range(8):
+        a = i * math.pi / 4 + phase * 0.04
+        for t in (9, 10):
+            d.point((round(cx + math.cos(a) * t), round(cy + math.sin(a) * t)),
+                    fill=col)
+
+
+def dotted_rule(d, y, col=(96, 102, 128)):
+    """Cheaper on the eye than a solid line at this size."""
+    for x in range(1, 63, 2):
+        d.point((x, y), fill=col)
+
+
+def marquee_at(img, text, y, col, scale, phase, x0=1, x1=63):
+    """Scroll text through a window, preserving whatever is behind it."""
+    win, w = x1 - x0, text_width(text, scale)
+    if w <= win:
+        draw_text(ImageDraw.Draw(img), text, x0, y, col, scale)
+        return
+    h = text_height(scale)
+    strip = img.crop((x0, y, x1, y + h))
+    sd = ImageDraw.Draw(strip)
+    gap = 6 * scale
+    span = w + gap
+    off = phase % span
+    draw_text(sd, text, -off, 0, col, scale)
+    draw_text(sd, text, -off + span, 0, col, scale)
+    img.paste(strip, (x0, y))
+
+
 # ------------------------------------------------------------ atmosphere
 
 # Each track keeps the same colour everywhere, so you find yours by colour
@@ -745,129 +798,128 @@ def screen_services(dirt, bath, wx, cal, phase=0):
 
 # ---------------------------------------------------------------- screens
 
-def screen_flag(dirt, bath, wx, cal, phase=0):
-    """All three tracks at once. The bar carries tonight's headline; the rows
-    say what each track is doing, so a dark Fonda is as visible as a green
-    Albany. When nothing is running, the soonest track is lit — three equally
-    dim rows make you read all of them to find the one that matters."""
-    img, d = canvas()
+FLAG_INK = {"racing": (60, 206, 104), "watch": (238, 200, 60),
+            "rained": (226, 72, 68), "rain": (226, 72, 68),
+            "dark": (96, 92, 104), "standby": (96, 92, 104)}
 
+
+def race_date(rows):
+    """The date the board is talking about — the soonest race among the
+    tracks, not today, so a Thursday still says FRI AUG 21."""
+    dates = sorted(r["date"] for r in rows if r.get("date"))
+    if not dates:
+        return ""
+    y, m, d = (int(x) for x in dates[0].split("-"))
+    return dt.date(y, m, d).strftime("%a %b %-d").upper()
+
+
+def screen_flag(dirt, bath, wx, cal, phase=0):
+    """Three tracks: status colour, rain chance, and what's running.
+
+    Start times are deliberately absent — you know when your tracks go green.
+    What you don't know is whether it's on and whether it'll rain, so those
+    get the space instead.
+    """
+    img, d = canvas()
     status = dirt.get("status", "OK")
     if status in ("OFFLINE", "UNKNOWN") or not dirt.get("rows"):
         return draw_unavailable(img, d, "DIRTCHECK", status)
 
-    bar_color, bar_text, word = STATES.get(dirt["state"], STATES["standby"])
-
-    # Stale data keeps its content but loses its colour. Green is a claim
-    # about right now; an hour-old fetch has no business making it.
+    rows = dirt["rows"][:3]
+    head = race_date(rows) or "NO RACES"
+    draw_text(d, head, 1, 0, RAIL if status == "STALE" else SODIUM, 1)
     if status == "STALE":
-        bar_color, bar_text = RAIL, DUST
+        draw_text(d, "STALE", 62 - text_width("STALE", 1), 0, SODIUM, 1)
+    dotted_rule(d, 6, RAIL)
 
-    standby = dirt["state"] == "standby"
-    racing = dirt["state"] == "racing" and status == "OK"
+    y = 8
+    for r in rows:
+        st = r.get("state", "dark")
+        col = FLAG_INK.get(st, FLAG_INK["dark"])
+        dark = st in ("dark", "standby")
 
-    if standby:
-        draw_bar(d, SODIUM, "DIRT CHK", LOAM)
-    else:
-        draw_bar(d, bar_color, word, bar_text)
-        if racing:
-            checker_flanks(d, word, phase, bar_color)
+        d.rectangle([0, y, 6, y + 15], fill=col)
+        draw_text(d, r["code"], 10, y, SLATE if dark else DUST, 2)
 
-    rows = dirt.get("rows") or []
-    ROW_H, y0 = 12, BAR_H + 4
+        prob = r.get("prob")
+        if prob is not None:
+            ps = "%d%%" % prob
+            draw_text(d, ps, 62 - text_width(ps, 2), y,
+                      SLATE if dark else col, 2)
 
-    def risk_chip(r):
-        """The chip is rain risk, not race state — that way it carries
-        information every day of the week rather than only on race nights.
-        'Is it happening now' is answered by NOW in the day column and by the
-        bar going green."""
-        if r["state"] == "rained":
-            return RED
-        p = r["prob"]
-        if p is None:
-            return RAIL
-        if p >= 60:
-            return RED
-        if p >= 30:
-            return YELLOW
-        return GREEN
+        # The event name only moves on a track that's actually running —
+        # three scrolling lines at once is noise, not information.
+        label = r.get("name") or ("" if dark else r.get("when", ""))
+        if label:
+            if dark:
+                draw_text(d, label[:13], 10, y + 11, SLATE, 1)
+            else:
+                marquee_at(img, label.upper(), y + 11, SLATE, 1, phase, 10, 63)
+                d = ImageDraw.Draw(img)
+        elif dark:
+            draw_text(d, r.get("when", ""), 10, y + 11, SLATE, 1)
 
-    # on a standby screen the first row is the next race, so highlight it
-    lit = 0 if standby and rows else -1
-
-    for i, r in enumerate(rows[:3]):
-        y = y0 + i * ROW_H
-        live = r["state"] != "dark"
-        hot = (i == lit)
-
-        d.rectangle([0, y, 2, y + ROW_H - 3],
-                    fill=RAIL if status == "STALE" else risk_chip(r))
-        ink = TRACK_INK.get(r["code"], DUST)
-        draw_text(d, r["code"], 6, y + 1,
-                  ink if (live or hot) else tuple(v // 2 for v in ink), 2)
-
-        # two fixed columns so a 3-char code and a 3-char day never collide
-        draw_text(d, r["when"], 34, y + 3,
-                  SODIUM if (live or hot) else SLATE, 1)
-        if r["prob"] is not None:
-            p = f"{r['prob']}%"
-            draw_text(d, p, 62 - text_width(p, 1), y + 3,
-                      DUST if (live or hot) else SLATE, 1)
-
-    note = stale_note(status)
-    if racing and not note:
-        # A car crosses the footer while cars are actually crossing a track.
-        # It only ever runs on a green night, which is what makes it worth
-        # looking at rather than wallpaper.
-        draw_car(d, phase)
-    else:
-        draw_footer(img, f"{dirt['label']}  {note}".strip() if note
-                    else dirt["label"], phase, SODIUM if note else SLATE)
+        y += 19
+        if y < 60:
+            dotted_rule(d, y - 2, RAIL)
     return img
 
 
 def screen_weather(dirt, bath, wx, cal, phase=0):
-    """The sky behind the numbers is the forecast. Rain falls, snow drifts,
-    stars twinkle, lightning forks behind the numbers — so the screen answers
-    from across the room
-    and the digits are only confirmation."""
+    """Hero icon and temperature up top, hi/lo under it, three days below.
+
+    No header bar: it cost a quarter of the panel to say one word the icon
+    already says. Rain chance only prints in blue when it's 30% or more —
+    "5%" on a clear Monday is noise, and a number appearing is the signal.
+    """
     status = wx.get("status", "OK")
     if status in ("OFFLINE", "UNKNOWN") or "temp" not in wx:
         return draw_unavailable(*canvas(), "WEATHER", status)
 
     kind = sky_name(wx.get("code", 0))
+    img, d = canvas()
 
-    img, d = sky(kind)
     if kind == "storms":
-        draw_lightning(d, phase)
-        precip(d, "storm", phase)          # bolts behind, rain in front
-    else:
-        precip(d, kind, phase)
+        draw_lightning(d, phase, top=1, bottom=30)
+    precip(d, "storm" if kind == "storms" else kind, phase)
 
-    c, tc, word = wx_bar(wx)
-    d.rectangle([0, 0, 63, BAR_H], fill=c)
-    sc = fit_scale(word, BAR_SCALE)
-    tw = text_width(word, sc)
-    x = (64 - (SPRITE_W + 3 + tw)) // 2
-    draw_sprite(d, word if word in SPRITES else "CLEAR", x, 3, tc)
-    draw_text(d, word, x + SPRITE_W + 3, 4 + (BAR_SCALE - sc) * 2, tc, sc)
+    col = {"clear": (255, 214, 110), "cloudy": (200, 208, 228),
+           "rain": (172, 198, 234), "snow": (230, 240, 255),
+           "storms": (192, 198, 232), "night": (206, 212, 240)}[kind]
+    if kind == "clear":
+        hero_sun(d, 13, 13, col, phase)
+    elif kind == "night":
+        d.ellipse([7, 7, 19, 19], fill=col)
+        d.ellipse([4, 4, 15, 15], fill=LOAM)      # crescent
+    else:
+        hero_cloud(d, 4, 6, col)
 
     big = str(wx["temp"])
-    ink = temp_ink(wx["temp"])
-    draw_centered(d, big, 22, ink, 4)
+    draw_text(d, big, 61 - text_width(big, 4), 2, DUST, 4)
 
-    # three-day strip, legible against whatever sky is behind it
-    pale, dim = (232, 238, 250), (196, 210, 232)
-    d.line([4, 46, 59, 46], fill=dim)
-    for i, (n, hi, lo) in enumerate(wx.get("days", [])[:3]):
+    hi, lo = wx.get("high"), wx.get("low")
+    if hi is not None:
+        draw_text(d, str(hi), 27, 24, HI_INK, 2)
+    if lo is not None:
+        draw_text(d, str(lo), 47, 24, LO_INK, 2)
+
+    dotted_rule(d, 34)
+
+    for i, day in enumerate(wx.get("days", [])[:3]):
+        name, dhi, dlo = day[0], day[1], day[2]
+        prob = day[3] if len(day) > 3 else None
         cx = 11 + i * 21
-        draw_text(d, n, cx - text_width(n, 1) // 2, 48, dim, 1)
-        v = f"{hi}/{lo}"
-        draw_text(d, v, cx - text_width(v, 1) // 2, 54, pale, 1)
+        draw_text(d, name, cx - text_width(name, 1) // 2, 38, SLATE, 1)
+        hs, ls = str(dhi), str(dlo)
+        draw_text(d, hs, cx - text_width(hs, 1) - 1, 46, HI_INK, 1)
+        draw_text(d, ls, cx + 2, 46, LO_INK, 1)
+        if prob is not None:
+            ps = "%d%%" % prob
+            draw_text(d, ps, cx - text_width(ps, 1) // 2, 55,
+                      WET_INK if prob >= 30 else SLATE, 1)
 
-    note = stale_note(status)
-    if note:
-        draw_footer(img, note, phase, SODIUM)
+    if stale_note(status):
+        draw_text(d, "STALE", 1, 1, SODIUM, 1)
     return img
 
 
@@ -1252,10 +1304,13 @@ def fetch():
             "code": cur["weather_code"],
             "wind": round(cur["wind_speed_10m"]),
             "rain": day["precipitation_probability_max"][0] or 0,
+            # Per-day rain chance was already in the API call and thrown
+            # away; the forecast strip prints it when it's worth knowing.
             "days": [
                 (_day_name(raw_w["daily"]["time"][i]),
                  round(day["temperature_2m_max"][i]),
-                 round(day["temperature_2m_min"][i]))
+                 round(day["temperature_2m_min"][i]),
+                 round((day.get("precipitation_probability_max") or [0] * 9)[i]))
                 for i in range(1, min(4, len(day["temperature_2m_max"])))
             ],
         }

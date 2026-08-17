@@ -193,7 +193,7 @@ def track_rows(events_doc, status_doc, now=None):
         nxt = next((e for e in races if e["track"] == code), None)
         if not nxt:
             rows.append({"code": TRACK_CODE.get(code, code), "when": "\u2014",
-                         "state": "dark", "prob": None})
+                         "state": "dark", "prob": None, "name": "", "date": ""})
             continue
 
         st = statuses.get(f"{nxt['date']}|{code}", {})
@@ -210,6 +210,16 @@ def track_rows(events_doc, status_doc, now=None):
             delta = (when - now.date()).days
             label = when.strftime("%a").upper() if delta <= 6 else when.strftime("%-m/%-d")
 
+        # Event name and date ride along for the display. The feed has used
+        # more than one key for the name over time, so take the first that
+        # actually has something in it rather than assuming.
+        name = ""
+        for k in ("name", "title", "event", "desc", "note"):
+            if nxt.get(k):
+                name = str(nxt[k])
+                break
+
         rows.append({"code": TRACK_CODE.get(code, code), "when": label,
-                     "state": state, "prob": prob})
+                     "state": state, "prob": prob,
+                     "name": name, "date": nxt["date"]})
     return rows

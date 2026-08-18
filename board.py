@@ -781,25 +781,33 @@ def screen_services(dirt, bath, wx, cal, phase=0):
 
     rows, down = svc["rows"], svc.get("down") or []
     if down:
-        draw_bar(d, RED, "DOWN", DUST)
+        draw_bar(d, RED, "%d DOWN" % len(down) if len(down) > 1 else "DOWN", DUST)
     else:
         draw_bar(d, GREEN, "ALL UP", LOAM)
 
-    if not down:
-        big = "%d/%d" % (svc["up"], svc["total"])
-        draw_centered(d, big, 24, GREEN, 3)
-        draw_footer(img, "SERVICES OK", phase)
-        return img
+    # Every monitor, every time. The count alone was quicker to read but told
+    # you nothing you couldn't get from the LED being green, and the whole
+    # point of walking past this thing is seeing what's on it.
+    #
+    # Seven rows at a 6px pitch fill 18..60, so the footer is dropped when
+    # everything fits — its only job here was carrying the count, which the
+    # bar already has. Past FIT rows the footer comes back to say how many
+    # are hidden, and failures sort first so they're never the hidden ones.
+    FIT = 7
+    over = len(rows) - FIT
+    shown = rows[:FIT - 1] if over > 0 else rows[:FIT]
 
-    y = 21
-    for r in rows[:3]:
-        d.rectangle([0, y, 2, y + 8], fill=GREEN if r["up"] else RED)
-        draw_text(d, r["name"][:11], 6, y + 1, DUST if not r["up"] else SLATE, 1)
-        y += 12
+    y = 19
+    for r in shown:
+        dot = SLATE if r.get("unknown") else (GREEN if r["up"] else RED)
+        d.rectangle([0, y, 2, y + 4], fill=dot)
+        # Down names go bright, up names stay quiet — the eye lands on trouble
+        # before it reads a word.
+        draw_text(d, r["name"][:14], 5, y, SLATE if r["up"] else DUST, 1)
+        y += 6
 
-    extra = len(down) - min(3, len(rows))
-    draw_footer(img, "+%d MORE" % extra if extra > 0
-                else "%d/%d UP" % (svc["up"], svc["total"]), phase)
+    if over > 0:
+        draw_footer(img, "+%d MORE" % (over + 1), phase)
     return img
 
 

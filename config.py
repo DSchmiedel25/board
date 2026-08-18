@@ -114,6 +114,19 @@ PIHOLE_HOST = ""
 PIHOLE_PASSWORD = ""
 PIHOLE_TOKEN = ""                     # v5 only
 
+# System and network health.
+#
+# SYS_MOUNTS is what gets a fullness bar. "/" is the boot disk; add the media
+# mount so a filling library is visible before Jellyfin starts failing writes.
+# A mount that isn't there is skipped, so listing an unmounted path is safe.
+SYS_MOUNTS = ["/", "/mnt/media"]
+# Reachability target beyond the gateway. Something that answers ICMP fast and
+# isn't the thing you're diagnosing — don't point this at your own router or
+# at a host behind the VPN.
+SYS_WAN_HOST = "1.1.1.1"
+SYS_TAILSCALE = True                  # read `tailscale status` if installed
+SYS_NET_EVERY = 60                    # seconds between pings
+
 try:
     from local_config import *          # noqa: F401,F403  (overrides above)
 except ImportError:

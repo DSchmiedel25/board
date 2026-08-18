@@ -23,6 +23,15 @@ PIHOLE_HOST = "192.168.1.202"
 PIHOLE_PASSWORD = ""
 PIHOLE_TOKEN = ""                # v5 only
 
+# Health cards. SYS_MOUNTS is what gets a fullness bar — an unmounted path is
+# skipped rather than erroring, so listing the media mount is safe even when
+# the Mac Mini is off. Point SYS_WAN_HOST at something that answers ICMP fast
+# and isn't the thing you're diagnosing: not your router, not a Tailscale peer.
+SYS_MOUNTS = ["/", "/mnt/media"]
+SYS_WAN_HOST = "1.1.1.1"
+SYS_TAILSCALE = True
+SYS_NET_EVERY = 60               # seconds between pings
+
 # Apple Calendar -> right-click the calendar -> Share Calendar -> Public
 # Calendar -> copy link, then change webcal:// to https://
 # Leave blank if you don't use the calendar.

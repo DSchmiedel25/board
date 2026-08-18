@@ -34,6 +34,7 @@ from PIL import Image, ImageDraw
 from config import (
     PIXOO_IP, LAT, LON, DIRTCHECK_BASE, DATA_DIR,
     PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN,
+    SYS_MOUNTS, SYS_WAN_HOST, SYS_TAILSCALE, SYS_NET_EVERY,
     JELLYFIN_URL, JELLYFIN_KEY, JELLYFIN_USER,
     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
     MORNING, RACE_DAYS, RACE_WINDOW,
@@ -1248,11 +1249,13 @@ def snapshot(dirt, bath, wx, path=None):
         "hour": dt.datetime.now().hour,
         "dirt": {k: v for k, v in dirt.items() if k != "art"},
         "weather": {k: v for k, v in wx.items()
-                    if k not in ("nascar", "radar", "services", "pihole")},
+                    if k not in ("nascar", "radar", "services", "pihole",
+                                 "sysnet")},
         "nascar": wx.get("nascar") or {},
         "radar": wx.get("radar") or {},
         "services": wx.get("services") or {},
         "pihole": wx.get("pihole") or {},
+        "sysnet": wx.get("sysnet") or {},
         "health": HEALTH,
         "jellyfin": {k: v for k, v in bath.items() if k != "art"},
     }
@@ -1363,6 +1366,19 @@ def fetch():
             wx["pihole"] = keep
         else:
             wx["pihole"] = {"offline": True}
+
+    # System and network health. Purely local except for two pings, which
+    # sysnet rate-limits itself, so unlike the remote feeds there's no cached
+    # last-known-good path here: if this raises, the card goes to its own
+    # unknown state rather than showing yesterday's temperature.
+    try:
+        import sysnet as _sysnet
+        wx["sysnet"] = _sysnet.build(mounts=SYS_MOUNTS,
+                                     wan_host=SYS_WAN_HOST,
+                                     want_tailscale=SYS_TAILSCALE,
+                                     net_every=SYS_NET_EVERY)
+    except Exception:
+        wx["sysnet"] = {"level": "unknown", "notes": []}
 
     snapshot(dirt, bath, wx)
 

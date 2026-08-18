@@ -46,18 +46,41 @@ LAYOUT = os.path.join(DATA_DIR, "layout.json")
 # right — it just stops answering the question it exists for. Racing needs
 # height for six rows before they collapse into an unreadable stack; the
 # radar below 3x3 is a blurry crop with all three pins on top of each other.
+# key, label, description, min w, min h, max w, max h, min aspect, max aspect.
+#
+# Aspect is the rendered box in PIXELS, wide over tall — not cells. A grid cell
+# is 138x39px, so it is 3.56:1 on its own and cell counts say almost nothing
+# about shape: 3x1 is 11.7:1, 3x2 is 4.7:1, and 3x8 is square. Judging shape by
+# cell count is how a card ends up in a box it cannot lay out in.
+#
+# The maximum is a different kind of limit from the minimum. A card below its
+# minimum stops answering the question it exists for. A card outside its aspect
+# range still renders, but renders badly — a row-based layout in a tall slot is
+# a short strip floating in an empty box.
 MODULES = [
-    ("flag",     "Flag strip",  "Racing tonight, rained out, or standby", 4, 2),
-    ("racing",   "Racing",      "3 dirt tracks and 3 NASCAR series",      4, 5),
-    ("weather",  "Weather",     "Now, three-day forecast and conditions", 3, 3),
-    ("radar",    "Radar",       "Rain moving in, with the three tracks",  3, 3),
-    ("wire",     "Wire",        "Headlines from your RSS feeds",          4, 1),
-    ("media",    "Now playing", "Jellyfin — only while something streams",4, 2),
-    ("services", "Services",    "Uptime Kuma health",                     3, 1),
-    ("pihole",   "Pi-hole",     "Share of DNS blocked today, and traffic",4, 1),
-    ("gallery",  "Gallery",     "Photos, GIFs and clips you've uploaded", 3, 2),
+    ("flag",     "Flag strip",  "Racing tonight, rained out, or standby", 4, 2, 12,  8,  3.0, 40.0),
+    ("racing",   "Racing",      "3 dirt tracks and 3 NASCAR series",      4, 5, 12, 18,  0.55, 4.5),
+    ("weather",  "Weather",     "Now, three-day forecast and conditions", 3, 3, 12, 18,  0.40, 6.0),
+    ("radar",    "Radar",       "Rain moving in, with the three tracks",  3, 3, 12, 18,  0.50, 6.0),
+    ("wire",     "Wire",        "Headlines from your RSS feeds",          4, 1, 12,  6,  5.0, 50.0),
+    # media's ceiling on height is the honest one: the card is flex-direction
+    # row, so a tall slot gets a wide strip floating in space. Raise this when
+    # the portrait layout exists, not before.
+    ("media",    "Now playing", "Jellyfin — only while something streams",4, 2, 12,  8,  3.0, 35.0),
+    ("services", "Services",    "Uptime Kuma health",                     3, 1, 12,  8,  2.0, 50.0),
+    ("pihole",   "Pi-hole",     "Share of DNS blocked today, and traffic",4, 1, 12,  8,  3.0, 50.0),
+    # Gallery is deliberately the loosest: framing is stored per image as a
+    # focal point and zoom, so it genuinely adapts to any shape.
+    ("gallery",  "Gallery",     "Photos, GIFs and clips you've uploaded", 3, 2, 12, 18,  0.20, 20.0),
+    # 2x2 is a real floor, not a courtesy: below that the hour and minute stop
+    # fitting on one line and the thing reads as two numbers, not a time.
+    ("clock",    "Clock",       "Time and date, ticking locally",         2, 2, 12, 10,  0.60, 12.0),
+    ("system",   "Pi health",   "Temperature, load, memory and disks",    4, 2, 12,  8,  1.5, 25.0),
+    ("net",      "Network",     "Link, latency, loss and throughput",     4, 2, 12,  8,  1.5, 25.0),
 ]
 MINS = {m[0]: (m[3], m[4]) for m in MODULES}
+MAXES = {m[0]: (m[5], m[6]) for m in MODULES}
+ASPECT = {m[0]: (m[7], m[8]) for m in MODULES}
 KEYS = [m[0] for m in MODULES]
 LABELS = {m[0]: m[1] for m in MODULES}
 
@@ -77,6 +100,15 @@ OPTS = {
         ("fit", "Framing", "chips",
          [("contain", "Whole image"), ("cover", "Fill slot")], "contain"),
     ],
+    "clock": [
+        ("fmt", "Format", "chips",
+         [("12", "12-hour"), ("24", "24-hour")], "12"),
+        ("secs", "Seconds", "chips",
+         [("off", "Hide"), ("on", "Show")], "off"),
+        ("date", "Date line", "chips",
+         [("long", "Tuesday, August 18"), ("short", "Tue Aug 18"),
+          ("off", "Hide")], "long"),
+    ],
     "wire": [
         ("dwell", "Seconds per set", "range", (6, 120), 22),
         ("rows", "Headlines shown", "range", (1, 5), 3),
@@ -87,6 +119,79 @@ OPTS = {
 
 # Floor for a slot holding nothing yet.
 SLOT_MIN = (3, 1)
+SLOT_MAX = (COLS, ROWS)
+
+# The stage is a fixed 1920x1080 surface that gets scaled to whatever screen
+# it lands on, so shape can be reasoned about in absolute pixels. The gap is
+# configurable, but the constraint maths uses the nominal 20 — the aspect
+# ranges are far wider than the difference a few pixels of gutter makes.
+STAGE_W, STAGE_H, NOMINAL_GAP = 1920, 1080, 20
+
+
+def box_px(w, h, gap=NOMINAL_GAP):
+    """Rendered size of a w x h slot, in stage pixels."""
+    tw = (STAGE_W - 2 * gap - (COLS - 1) * gap) / COLS
+    th = (STAGE_H - 2 * gap - (ROWS - 1) * gap) / ROWS
+    return w * tw + (w - 1) * gap, h * th + (h - 1) * gap
+
+
+def aspect(w, h, gap=NOMINAL_GAP):
+    bw, bh = box_px(w, h, gap)
+    return (bw / bh) if bh > 0 else 0.0
+
+
+def slot_max(modules):
+    """A slot may be no larger than its most restrictive occupant allows.
+
+    Min takes the max across occupants and max takes the min, so a shared slot
+    is the intersection of what everything in it can live with.
+    """
+    w, h = SLOT_MAX
+    for k in modules or []:
+        mw, mh = MAXES.get(k, SLOT_MAX)
+        w, h = min(w, mw), min(h, mh)
+    return w, h
+
+
+def slot_aspect(modules):
+    """Intersection of the occupants' shape ranges.
+
+    Can come back empty — Wire wants at least 5:1 and Racing at most 4.5:1, so
+    there is no box both are happy in. Callers check lo <= hi and refuse the
+    pairing rather than picking a shape that suits neither.
+    """
+    lo, hi = 0.0, 1e9
+    for k in modules or []:
+        a, b = ASPECT.get(k, (0.0, 1e9))
+        lo, hi = max(lo, a), min(hi, b)
+    return lo, hi
+
+
+def fit_shape(w, h, modules):
+    """Clamp a slot to its occupants' size and shape limits.
+
+    Shrink-only on the aspect correction. Growing a slot to fix its shape can
+    push it into a neighbour, and sanitize drops overlapping slots outright —
+    so a well-meant correction would cost the user their modules. A slightly
+    wrong shape is a much smaller price.
+    """
+    mw, mh = slot_min(modules)
+    xw, xh = slot_max(modules)
+    xw, xh = max(mw, xw), max(mh, xh)          # min always wins a conflict
+    w = clamp(w, mw, min(xw, COLS))
+    h = clamp(h, mh, min(xh, ROWS))
+
+    lo, hi = slot_aspect(modules)
+    if lo > hi:
+        return w, h                            # incompatible; leave it alone
+    guard = 0
+    while aspect(w, h) > hi and w > mw and guard < 64:
+        w -= 1
+        guard += 1
+    while aspect(w, h) < lo and h > mh and guard < 64:
+        h -= 1
+        guard += 1
+    return w, h
 
 
 def slot_min(modules):
@@ -183,8 +288,7 @@ def sanitize(doc):
         # ends up in a box smaller than it can say anything in. Computed
         # before the box because the answer depends on what is inside.
         mw, mh = slot_min(mods)
-        w = clamp(s.get("w", mw), mw, COLS)
-        h = clamp(s.get("h", mh), mh, ROWS)
+        w, h = fit_shape(s.get("w", mw), s.get("h", mh), mods)
         col = clamp(s.get("col", 1), 1, COLS - w + 1)
         row = clamp(s.get("row", 1), 1, ROWS - h + 1)
         box = {"col": col, "row": row, "w": w, "h": h}
@@ -373,10 +477,78 @@ const COLS = {{COLS}}, ROWS = {{ROWS}};
 const MODULES = {{MODULES}};
 const OPTS = {{OPTS}};
 const SLOT_MIN = {{SLOT_MIN}};
+const SLOT_MAX = {{SLOT_MAX}};
 const MINS = {{MINS}};
+const MAXES = {{MAXES}};
+const ASPECT = {{ASPECT}};
+const STAGE = {{STAGE}};
 
-/* A slot must fit its largest occupant on each axis — same rule the server
-   applies, so the editor can't offer a size that gets clamped on save. */
+/* These mirror layout.py exactly. The editor enforcing the same rules as the
+   server is the whole point: anything it lets you build should survive Save
+   untouched, so you never see a slot quietly change shape after you saved it.
+
+   Shape is measured on the rendered box in pixels, not in cells. A grid cell
+   is 138x39, so it is 3.56:1 on its own — 3x1 is 11.7:1 and 3x8 is square. */
+function boxPx(w, h){
+  const [SW, SH, G] = STAGE;
+  const tw = (SW - 2*G - (COLS-1)*G) / COLS;
+  const th = (SH - 2*G - (ROWS-1)*G) / ROWS;
+  return [w*tw + (w-1)*G, h*th + (h-1)*G];
+}
+function ratio(w, h){ const [bw, bh] = boxPx(w, h); return bh > 0 ? bw/bh : 0; }
+
+function slotMax(mods){
+  let w = SLOT_MAX[0], h = SLOT_MAX[1];
+  (mods || []).forEach(k => {
+    const m = MAXES[k]; if(!m) return;
+    w = Math.min(w, m[0]); h = Math.min(h, m[1]);
+  });
+  return [w, h];
+}
+
+/* Intersection of the occupants' shape ranges. Comes back empty for a pairing
+   with no box that suits both — Wire wants 5:1 or wider, Racing 4.5:1 or
+   narrower — and callers refuse the pairing rather than split the difference. */
+function slotAspect(mods){
+  let lo = 0, hi = 1e9;
+  (mods || []).forEach(k => {
+    const a = ASPECT[k]; if(!a) return;
+    lo = Math.max(lo, a[0]); hi = Math.min(hi, a[1]);
+  });
+  return [lo, hi];
+}
+
+/* Size and shape clamp. Shrink-only on the aspect pass, same as the server:
+   growing a slot to fix its shape can push it into a neighbour, and that
+   costs the user a whole slot to fix a cosmetic problem. */
+function fitShape(w, h, mods){
+  const [mw, mh] = slotMin(mods);
+  let [xw, xh] = slotMax(mods);
+  xw = Math.max(mw, xw); xh = Math.max(mh, xh);
+  w = Math.max(mw, Math.min(Math.min(xw, COLS), w));
+  h = Math.max(mh, Math.min(Math.min(xh, ROWS), h));
+  const [lo, hi] = slotAspect(mods);
+  if(lo > hi) return [w, h];
+  let g = 0;
+  while(ratio(w, h) > hi && w > mw && g++ < 64) w--;
+  while(ratio(w, h) < lo && h > mh && g++ < 64) h--;
+  return [w, h];
+}
+
+/* Why a given size was refused, in words. "Too wide" is meaningless without
+   saying what it is too wide for. */
+function shapeWhy(w, h, mods){
+  const [mw, mh] = slotMin(mods), [xw, xh] = slotMax(mods);
+  if(w < mw || h < mh) return "needs at least " + mw + "\u00d7" + mh;
+  if(w > xw || h > xh) return "no bigger than " + xw + "\u00d7" + xh;
+  const [lo, hi] = slotAspect(mods);
+  if(lo > hi) return "these modules want shapes that don't overlap";
+  const r = ratio(w, h);
+  if(r > hi) return "too wide for its height";
+  if(r < lo) return "too tall for its width";
+  return "";
+}
+
 function slotMin(mods){
   let w = SLOT_MIN[0], h = SLOT_MIN[1];
   (mods || []).forEach(k => {
@@ -453,9 +625,14 @@ function buildSlots(){
       <div class="slhead">
         <div class="t">${s.w}&times;${s.h} at ${s.col},${s.row}
           <div class="d">${s.modules.length} module${s.modules.length===1?"":"s"}${
-            (() => { const [mw,mh] = slotMin(s.modules);
-                     return (mw>SLOT_MIN[0]||mh>SLOT_MIN[1])
-                       ? ` &middot; min ${mw}×${mh}` : ""; })()}</div></div>
+            (() => { const [mw,mh] = slotMin(s.modules), [xw,xh] = slotMax(s.modules);
+                     if(!s.modules.length) return "";
+                     /* Both ends, always, once anything is in the slot: seeing
+                        only the floor is what makes a ceiling feel like a bug
+                        when you hit it. */
+                     return ` &middot; ${mw}×${mh} to ${xw}×${xh}`; })()}${
+            (() => { const w = shapeWhy(s.w, s.h, s.modules);
+                     return w ? ` &middot; <b class="warn">${w}</b>` : ""; })()}</div></div>
         <div class="modes" data-id="${s.id}">
           <span data-mode="single"   class="${s.mode==="single"?"on":""}">One</span>
           <span data-mode="takeover" class="${s.mode==="takeover"?"on":""}">Takeover</span>
@@ -660,9 +837,13 @@ canvas.addEventListener("pointermove", e => {
   if(dx || dy) drag.moved = true;
   const s = drag.s, b = drag.base;
   if(drag.resizing){
-    const [mw, mh] = slotMin(s.modules);
-    s.w = Math.max(mw, Math.min(COLS - b.col + 1, b.w + dx));
-    s.h = Math.max(mh, Math.min(ROWS - b.row + 1, b.h + dy));
+    const want = [Math.min(COLS - b.col + 1, b.w + dx),
+                  Math.min(ROWS - b.row + 1, b.h + dy)];
+    const [fw, fh] = fitShape(want[0], want[1], s.modules);
+    s.w = fw; s.h = fh;
+    // Say why the handle stopped following the finger, or it reads as a bug.
+    drag.pinned = (fw !== want[0] || fh !== want[1])
+                ? shapeWhy(want[0], want[1], s.modules) : "";
   }else{
     s.col = Math.max(1, Math.min(COLS - s.w + 1, b.col + dx));
     s.row = Math.max(1, Math.min(ROWS - s.h + 1, b.row + dy));
@@ -678,7 +859,10 @@ function endDrag(){
   if(drag.moved && collides(drag.s)){
     Object.assign(drag.s, drag.base);
     mark("Slots can't overlap — moved back", "bad");
-  }else if(drag.moved) touch();
+  }else if(drag.moved){
+    if(drag.pinned) mark(drag.pinned, "warn");
+    touch();
+  }
   drag = null; build();
 }
 canvas.addEventListener("pointerup", endDrag);
@@ -714,9 +898,9 @@ function moveMod(key, toSlot){
     if(!s) return;
     if(s !== from && !growToFit(s, s.modules.concat([key]))){
       history.pop(); $("#undo").disabled = !history.length;
-      const [mw, mh] = slotMin([key]);
-      mark(label(key) + " needs at least " + mw + "×" + mh +
-           " — no room to grow that slot", "bad");
+      const why = shapeWhy(s.w, s.h, s.modules.concat([key]));
+      mark(label(key) + " doesn't fit that slot — " +
+           (why || "no room to grow it"), "bad");
       return;
     }
   }
@@ -901,6 +1085,10 @@ def page():
             .replace("{{OPTS}}", json.dumps(OPTS))
             .replace("{{SLOT_MIN}}", json.dumps(list(SLOT_MIN)))
             .replace("{{MINS}}", json.dumps(MINS))
+            .replace("{{MAXES}}", json.dumps(MAXES))
+            .replace("{{ASPECT}}", json.dumps(ASPECT))
+            .replace("{{SLOT_MAX}}", json.dumps(list(SLOT_MAX)))
+            .replace("{{STAGE}}", json.dumps([STAGE_W, STAGE_H, NOMINAL_GAP]))
             .replace("{{DMIN}}", str(DWELL_MIN))
             .replace("{{DMAX}}", str(DWELL_MAX))
             .replace("{{DEFAULTS}}", json.dumps(sanitize(DEFAULT)))

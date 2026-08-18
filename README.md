@@ -131,6 +131,7 @@ launchctl bootout gui/$(id -u)/com.board.pixoo        # stop
 | `jellyfin.py` | Now-playing state and artwork |
 | `kuma.py` | Uptime Kuma service health |
 | `pihole.py` | Pi-hole v6/v5 stats |
+| `sysnet.py` | Pi health and network health; run standalone to inspect |
 | `lifx_jf.py` | Drives a LIFX bulb from Jellyfin now-playing art |
 | `nextevent.py` | Expands recurring events from a published .ics (Pi) |
 | `nextevent-mac.py` | Reads Calendar.app directly via EventKit (Mac) |

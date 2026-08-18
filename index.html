@@ -81,14 +81,141 @@ body.no-media #media{display:none}
 /* ---------------------------------------------------------------- clock
    Sits over the top-right corner of whatever occupies that area rather than
    claiming cells of its own. Tabular figures so the colon doesn't jitter. */
-#clock{position:absolute;top:calc(var(--gap) + 8px);right:calc(var(--gap) + 18px);
+#cornerclock{position:absolute;top:calc(var(--gap) + 8px);right:calc(var(--gap) + 18px);
        z-index:40;text-align:right;pointer-events:none;
        text-shadow:0 2px 10px rgba(0,0,0,.75)}
-#clockT{display:block;font-size:60px;font-weight:900;line-height:.9;
+#cornerclock .t{display:block;font-size:60px;font-weight:900;line-height:.9;
         letter-spacing:.01em;font-variant-numeric:tabular-nums}
-#clockD{display:block;font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+#cornerclock .d{display:block;font-family:"DejaVu Sans Mono",ui-monospace,monospace;
         font-size:15px;letter-spacing:.2em;color:var(--sodium);
         text-transform:uppercase;margin-top:5px}
+/* Set by applyLayout when "clock" holds a slot somewhere. */
+#app[data-clockslot="1"] #cornerclock{display:none}
+
+/* The clock module. No header — a card that says CLOCK above a clock is
+   wasting the cells that make it legible from the doorway. Tabular figures
+   again, and the minute pinned to the baseline of the hour. */
+#clock .body{align-items:center;justify-content:center;text-align:center;
+             gap:calc(var(--gap)*.35)}
+#clock .ct{display:flex;align-items:baseline;justify-content:center;gap:.1em;
+           font-size:clamp(26px,calc(48 * var(--u)),263px);font-weight:900;line-height:.84;
+           letter-spacing:.005em;font-variant-numeric:tabular-nums}
+#clock .cm{font-size:.3em;font-weight:800;letter-spacing:.12em;
+           color:var(--sodium)}
+#clock .cd{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+           font-size:clamp(7px,calc(10 * var(--u)),55px);letter-spacing:.22em;
+           color:var(--sodium);text-transform:uppercase;line-height:1.2}
+/* Seconds as a sweep rather than digits: readable at a glance from across the
+   room, where two more numerals would not be. */
+#clock .csec{display:none;width:62%;height:max(2px,calc(1.4 * var(--u)));border-radius:99px;
+             background:rgba(255,255,255,.13);overflow:hidden}
+#clock[data-secs="on"] .csec{display:block}
+#clock .csec i{display:block;height:100%;width:0;border-radius:99px;
+               background:var(--sodium);transition:width .28s linear}
+/* A fresh minute snaps back instead of sliding the whole way in reverse. */
+#clock[data-wrap="1"] .csec i{transition:none}
+#clock[data-date="off"] .cd{display:none}
+
+/* Small slots: the sweep goes first, then the AM/PM marker, then the date —
+   the time itself is the last thing to give up room. */
+@container (max-height: 150px){
+  #clock[data-secs="on"] .csec{display:none}
+}
+@container (max-height: 110px){
+  #clock .cm{font-size:.26em;letter-spacing:.06em}
+}
+@container (max-width: 200px){
+  #clock .cd{display:none}
+}
+
+/* ---------------------------------------------------------- scale unit
+   --u is one "size unit" for a card: the average of 1% of its height and 1%
+   of its width, normalised so that at each card's default slot size one unit
+   equals exactly what 1cqh used to. Everything inside a card is a multiple of
+   it, so content tracks the slot in both directions.
+
+   Averaging the two axes rather than using height alone fixes the case that
+   made cards look broken when resized: a tall narrow slot has a large cqh and
+   a small cqi, so height-only scaling grew the type at exactly the moment the
+   room for it was shrinking. Averaging means growing a card in one direction
+   grows its contents by roughly half as much, which is what looks right.
+
+   Custom properties are substituted, not resolved, where they're declared —
+   the cq units here resolve in the descendant that uses them, where the
+   nearest container is this card. Using --u on the card itself would resolve
+   against the card's own ancestor instead, which is why nothing does. */
+#flag{--u:calc((1cqh + 0.0833cqi)/2)}
+#racing{--u:calc((1cqh + 0.5227cqi)/2)}
+#gallery{--u:calc((1cqh + 0.5227cqi)/2)}
+#weather{--u:calc((1cqh + 0.4320cqi)/2)}
+#radar{--u:calc((1cqh + 0.2793cqi)/2)}
+#wire{--u:calc((1cqh + 0.0520cqi)/2)}
+#media{--u:calc((1cqh + 0.0833cqi)/2)}
+#services{--u:calc((1cqh + 0.0833cqi)/2)}
+#pihole{--u:calc((1cqh + 0.0833cqi)/2)}
+#system{--u:calc((1cqh + 0.1685cqi)/2)}
+#net{--u:calc((1cqh + 0.1685cqi)/2)}
+#clock{--u:calc((1cqh + 0.3443cqi)/2)}
+
+/* ------------------------------------------------------- health cards
+   Pi health and Network are the same shape because they answer the same kind
+   of question: a word, then the reason, then the numbers behind it. Reading
+   order is deliberate — from the doorway you get the word, from the sofa the
+   reason, and you only walk over for the numbers. */
+#system .body, #net .body{gap:calc(var(--gap)*.45)}
+.hhead{display:flex;align-items:baseline;gap:.5em}
+.hdot{width:.62em;height:.62em;border-radius:50%;flex:0 0 auto;
+      background:var(--slate);align-self:center}
+.hword{font-size:clamp(12px,calc(17 * var(--u)),93px);font-weight:900;letter-spacing:.04em;
+       text-transform:uppercase;line-height:1}
+.hnote{font-size:clamp(8px,calc(11 * var(--u)),60px);font-weight:600;color:var(--dust);
+       opacity:.85;line-height:1.15;
+       display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;
+       overflow:hidden}
+.hnote:empty{display:none}
+/* auto-fit rather than a fixed count: the same card is legible at 4 cells
+   wide with two readings and at 12 with six, without a breakpoint each. */
+.hstats{display:grid;gap:.35em calc(var(--gap)*.6);margin-top:auto;
+        grid-template-columns:repeat(auto-fit,minmax(clamp(66px,calc(118.7 * var(--u)),132px),1fr))}
+.hstat{min-width:0}
+.hstat b{display:block;font-size:clamp(11px,calc(15 * var(--u)),82px);font-weight:900;
+         line-height:1.02;font-variant-numeric:tabular-nums;
+         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hstat span{display:block;font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+            font-size:clamp(6px,calc(6.5 * var(--u)),36px);letter-spacing:.14em;
+            color:var(--slate);text-transform:uppercase;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* A bar under the reading for anything with a ceiling — fullness and load
+   read faster as a length than as a percentage. */
+.hbar{height:max(2px,calc(1.1 * var(--u)));border-radius:99px;margin-top:.28em;
+      background:rgba(255,255,255,.12);overflow:hidden}
+.hbar i{display:block;height:100%;border-radius:99px;background:var(--sodium)}
+.hstat.warn b{color:var(--yellow)}
+.hstat.warn .hbar i{background:var(--yellow)}
+.hstat.bad b{color:var(--red)}
+.hstat.bad .hbar i{background:var(--red)}
+
+#system[data-level="ok"] .hdot, #net[data-level="ok"] .hdot{background:var(--green)}
+#system[data-level="warn"] .hdot, #net[data-level="warn"] .hdot{background:var(--yellow)}
+#system[data-level="bad"] .hdot, #net[data-level="bad"] .hdot{background:var(--red)}
+#system[data-level="bad"] .hword, #net[data-level="bad"] .hword{color:var(--red)}
+#system[data-level="warn"] .hword, #net[data-level="warn"] .hword{color:var(--yellow)}
+/* Only the bad state moves. A pulsing warn would make a warm afternoon look
+   like an emergency for six months of the year. */
+#system[data-level="bad"] .hdot, #net[data-level="bad"] .hdot{animation:hpulse 1.9s ease-in-out infinite}
+@keyframes hpulse{50%{opacity:.35}}
+
+/* Short slots shed the numbers before the verdict: a two-row strip should
+   still say GATEWAY UNREACHABLE even with no room for a latency figure. */
+@container (max-height: 150px){
+  #system .hstat .hbar, #net .hstat .hbar{display:none}
+}
+@container (max-height: 104px){
+  #system .hnote, #net .hnote{-webkit-line-clamp:1}
+}
+@container (max-height: 76px){
+  #system .hstats, #net .hstats{display:none}
+}
 
 /* --------------------------------------------------------------- stale
    The page can tell when board.py has stopped writing. It could not tell
@@ -130,9 +257,9 @@ body.no-media #media{display:none}
       display:flex;align-items:center;gap:1.2em;
       padding:1em 1.2em;background:var(--sunk)}
 /* clamp so it neither vanishes in a short strip nor overruns a tall one. */
-#flag .word{font-size:clamp(30px,61cqh,112px);font-weight:900;line-height:.92;
+#flag .word{font-size:clamp(30px,calc(61 * var(--u)),334px);font-weight:900;line-height:.92;
             letter-spacing:.02em;text-transform:uppercase;position:relative}
-#flag .sub{font-size:clamp(13px,20cqh,36px);font-weight:700;opacity:.8;
+#flag .sub{font-size:clamp(13px,calc(20 * var(--u)),110px);font-weight:700;opacity:.8;
            margin-left:auto;text-align:right;line-height:1.2;color:inherit;
            text-transform:uppercase;letter-spacing:.14em}
 #flag.racing{background:var(--green);color:#08240f}
@@ -167,31 +294,32 @@ body.no-media #media{display:none}
    second header eating a row's worth of height. A hairline and a small
    caption in the gutter does it. */
 .rgroup{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-        font-size:clamp(8px,2.3cqh,14px);
+        font-size:clamp(6px,calc(2.3 * var(--u)),46px);
         letter-spacing:.2em;color:var(--slate);text-transform:uppercase;
         padding:.25em 0 .35em;display:flex;align-items:center;gap:.8em}
 .rgroup:before{content:"";flex:1;height:1px;background:var(--rail);order:2}
 .rrow{display:flex;align-items:center;gap:1em;padding:.32em 0;min-width:0}
-.rrow .bar{width:5px;align-self:stretch;border-radius:3px;flex:none;
+.rrow .bar{width:clamp(3px,calc(0.88 * var(--u)),9px);align-self:stretch;border-radius:99px;flex:none;
            background:var(--rail)}
 .rrow.live .bar{background:var(--green)}
 .rrow .who{flex:1;min-width:0}
 /* Six rows plus two captions share this card, so a row is about 1/7th of
    it. Sized against that rather than a fixed 27px. */
-.rrow .nm{font-size:clamp(14px,4.7cqh,30px);font-weight:700;letter-spacing:.04em;
+.rrow .nm{font-size:clamp(12px,calc(4.7 * var(--u)),94px);font-weight:700;letter-spacing:.04em;
           line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rrow .sub{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-           font-size:clamp(9px,2.5cqh,16px);
+           font-size:clamp(6px,calc(2.5 * var(--u)),50px);
            letter-spacing:.13em;color:var(--sodium);text-transform:uppercase;
            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rrow .when{text-align:right;flex:none}
-.rrow .w1{font-size:clamp(13px,4.2cqh,27px);font-weight:700;line-height:1.1}
-.rrow .w2{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:13px;
+.rrow .w1{font-size:clamp(11px,calc(4.2 * var(--u)),84px);font-weight:700;line-height:1.1}
+.rrow .w2{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+          font-size:clamp(6px,calc(2.29 * var(--u)),46px);
           letter-spacing:.14em;color:#c9bda9;text-transform:uppercase}
 .rrow.live .w1{color:var(--green);font-weight:800}
 .rrow.dark .nm{color:#a49b8d}
 .rrow .net{background:var(--sunk);color:var(--sodium);font-weight:800;
-           border-radius:.4em;padding:.18em .5em;font-size:17px;flex:none;
+           border-radius:.4em;padding:.18em .5em;font-size:clamp(8px,calc(2.99 * var(--u)),60px);flex:none;
            min-width:3.2em;text-align:center}
 /* Fixed columns rather than `1fr` pushing the times to the far edge — across
    a 1000px panel that opens a canyon between the name and the status. */
@@ -205,7 +333,7 @@ body.no-media #media{display:none}
 #wxAlert{position:relative;z-index:3;padding:.5em 1.1em;display:flex;
          align-items:baseline;gap:.9em;background:var(--sodium);color:#2b2205}
 #wxAlert[hidden]{display:none}
-#wxAlert .ev{font-size:clamp(15px,9.3cqh,34px);font-weight:900;letter-spacing:.01em;
+#wxAlert .ev{font-size:clamp(14px,calc(9.3 * var(--u)),108px);font-weight:900;letter-spacing:.01em;
              text-transform:uppercase;line-height:1.05;white-space:nowrap;
              overflow:hidden;text-overflow:ellipsis}
 #wxAlert .til{margin-left:auto;font-family:"DejaVu Sans Mono",ui-monospace,monospace;
@@ -226,17 +354,17 @@ body.no-media #media{display:none}
 .wxmain{display:flex;align-items:center;gap:.4em;flex:1}
 /* Was 168px flat, which is why it clipped the moment the weather card was
    split in half to make room for the radar. */
-.wxtemp{font-size:clamp(44px,50cqh,190px);font-weight:900;line-height:.8;
+.wxtemp{font-size:clamp(44px,calc(50 * var(--u)),583px);font-weight:900;line-height:.8;
         letter-spacing:-.02em}
 .tempwrap{display:flex;align-items:baseline;gap:.08em}
-.wxdeg{font-size:clamp(16px,13cqh,50px);font-weight:700;opacity:.7}
+.wxdeg{font-size:clamp(16px,calc(13 * var(--u)),152px);font-weight:700;opacity:.7}
 .wxsub{margin-left:auto;text-align:right;font-size:.86em;line-height:1.7;color:#dbe6f7}
 .days{display:grid;grid-template-columns:repeat(3,1fr);gap:.6em;margin-top:auto;
       border-top:1px solid rgba(255,255,255,.28);padding-top:.7em}
 .day{text-align:center}
 .day .n{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
         font-size:.68em;color:#c3d4ec;letter-spacing:.18em}
-.day .hi{font-size:clamp(16px,12.5cqh,46px);font-weight:800;line-height:1.15}
+.day .hi{font-size:clamp(16px,calc(12.5 * var(--u)),146px);font-weight:800;line-height:1.15}
 .day .lo{font-size:.86em;color:#b3c6e2}
 
 /* -------------------------------------------------------------- radar
@@ -261,9 +389,12 @@ body.no-media #media{display:none}
 #radarEcho img{opacity:0;transition:opacity .18s linear;mix-blend-mode:screen}
 #radarEcho img.on{opacity:.92}
 #radar .pin{position:absolute;transform:translate(-50%,-50%);
-            width:11px;height:11px;border-radius:50%;
+            width:clamp(7px,calc(5.1 * var(--u)),20px);height:clamp(7px,calc(5.1 * var(--u)),20px);
+            border-radius:50%;
             box-shadow:0 0 0 2px rgba(0,0,0,.65)}
-#radar .pin b{position:absolute;left:15px;top:-5px;font-size:15px;
+/* left/top in em so the label stays pinned to the dot at any size. */
+#radar .pin b{position:absolute;left:1em;top:-.33em;
+              font-size:clamp(7px,calc(6.96 * var(--u)),53px);
               font-weight:800;letter-spacing:.06em;white-space:nowrap;
               text-shadow:0 1px 3px #000,0 0 8px #000}
 #radar .radarfoot{position:absolute;left:0;right:0;bottom:0;display:flex;
@@ -312,7 +443,9 @@ body.no-media #media{display:none}
 }
 @container (max-height: 210px){
   .rrow .net{display:none}
-  .rgroup{font-size:9px}
+  /* Lower the ceiling rather than pinning a pixel size: a fixed value here
+     means the caption stops shrinking as the card keeps shrinking, which is
+     the whole complaint about cards that ignore their slot. */
 }
 
 /* Wire: fewer headlines rather than three squeezed ones. */
@@ -338,12 +471,10 @@ body.no-media #media{display:none}
 
 /* Radar: the credit line and the timestamp crowd a small map. */
 @container (max-height: 190px){
-  #radar .radarfoot{font-size:11px;padding:.2em .5em}
+  #radar .radarfoot{padding:.2em .5em}
   #radar .credit{display:none}
 }
-@container (max-height: 130px){
-  #radar .pin b{font-size:11px}
-}
+
 
 /* Now playing: side-by-side streams need width; below it they stack, and
    below that only the first is shown. */
@@ -361,9 +492,9 @@ body.no-media #media{display:none}
 #wire{grid-column:1/span 12;grid-row:14/span 2}
 #wire > header{display:none}
 #wire .body{flex-direction:row;align-items:stretch;gap:var(--gap);
-            padding:2cqh var(--gap)}
+            padding:calc(2 * var(--u)) var(--gap)}
 .wmark{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-       font-size:clamp(8px,15.3cqh,17px);
+       font-size:clamp(7px,calc(15.3 * var(--u)),52px);
        letter-spacing:.18em;text-transform:uppercase;color:var(--slate);
        flex:none;padding-right:var(--gap);border-right:1px solid var(--rail);
        display:flex;flex-direction:column;justify-content:center;gap:.35em}
@@ -374,17 +505,17 @@ body.no-media #media{display:none}
       transition:opacity .55s ease}
 .wrow.out{opacity:0}
 .wsrc{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-      font-size:clamp(8px,14.3cqh,16px);
+      font-size:clamp(8px,calc(14.3 * var(--u)),16px);
       letter-spacing:.14em;color:var(--sodium);flex:0 0 74px;
       text-align:right;text-transform:uppercase}
 /* One line, always. A headline that wraps to two pushes the row below it off
    the card, and the layout has no room to absorb that. */
-.wtitle{font-size:clamp(14px,29.7cqh,34px);font-weight:700;letter-spacing:.02em;
+.wtitle{font-size:clamp(13px,calc(29.7 * var(--u)),102px);font-weight:700;letter-spacing:.02em;
         flex:1;min-width:0;white-space:nowrap;overflow:hidden;
         text-overflow:ellipsis;line-height:1.12}
 .wtime{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-       font-size:clamp(8px,14.3cqh,16px);color:var(--slate);flex:none}
-.wnone{color:var(--slate);font-size:20px;align-self:center}
+       font-size:clamp(8px,calc(14.3 * var(--u)),16px);color:var(--slate);flex:none}
+.wnone{color:var(--slate);font-size:clamp(9px,calc(20.45 * var(--u)),70px);align-self:center}
 /* Marquee: rows laid end to end on one line and translated. The set is
    duplicated so the loop is seamless. */
 #wire[data-mode="marquee"] .wrap{flex-direction:row;flex-wrap:nowrap;
@@ -416,7 +547,7 @@ body.no-media #media{display:none}
    cropped one it is invisible and still costs a blur pass every frame. */
 #gallery[data-fit="cover"] .gl .back,.gl[data-fit="cover"] .back{display:none}
 .glnone{position:absolute;inset:0;display:flex;align-items:center;
-        justify-content:center;color:var(--slate);font-size:26px;
+        justify-content:center;color:var(--slate);font-size:clamp(12px,calc(4.57 * var(--u)),91px);
         text-align:center;padding:2em}
 
 /* -------------------------------------------------------------- media */
@@ -425,7 +556,8 @@ body.no-media #media{display:none}
 /* .card sets display:flex, which outranks the hidden attribute's default */
 #services[hidden]{display:none}
 #services .body{flex-direction:row;align-items:center;gap:var(--gap)}
-.shead{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:15px;
+.shead{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+       font-size:clamp(7px,calc(9.57 * var(--u)),52px);
        letter-spacing:.18em;text-transform:uppercase;flex:none;
        padding-right:var(--gap);border-right:1px solid var(--rail)}
 .shead.ok{color:var(--green)} .shead.bad{color:var(--red)}
@@ -434,15 +566,17 @@ body.no-media #media{display:none}
    are what actually keep the count sane; this is the backstop. */
 .svcs{display:flex;align-items:center;gap:calc(var(--gap)*1.4);flex:1;
       min-width:0;flex-wrap:wrap;overflow:hidden;align-content:center}
-.svc{display:flex;align-items:baseline;gap:9px;min-width:0}
-.sdot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--green)}
+.svc{display:flex;align-items:baseline;gap:clamp(5px,calc(5.74 * var(--u)),16px);min-width:0}
+.sdot{width:clamp(6px,calc(6.38 * var(--u)),17px);height:clamp(6px,calc(6.38 * var(--u)),17px);
+      border-radius:50%;flex:none;background:var(--green)}
 .svc.dn .sdot{background:var(--red)}
-.sname{font-size:clamp(12px,15.3cqh,26px);font-weight:700;letter-spacing:.03em;
+.sname{font-size:clamp(11px,calc(15.3 * var(--u)),84px);font-weight:700;letter-spacing:.03em;
        white-space:nowrap}
 .svc.dn .sname{color:var(--dust)} .svc.up .sname{color:#bdb1a2}
-.spct{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
+.spct{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+      font-size:clamp(6px,calc(8.94 * var(--u)),49px);
       color:var(--slate)}
-.svcnone{color:var(--slate);font-size:20px}
+.svcnone{color:var(--slate);font-size:clamp(9px,calc(12.77 * var(--u)),70px)}
 
 /* -------------------------------------------------------------- pihole
    Built to sit in the same slot as Services and rotate with it, so it is
@@ -450,27 +584,34 @@ body.no-media #media{display:none}
 #pihole{grid-column:1/span 12;grid-row:16/span 3;position:relative;overflow:hidden}
 #pihole > header{display:none}
 #pihole .body{flex-direction:row;align-items:center;gap:var(--gap);
-              padding:12px var(--gap)}
-.phpct{font-size:clamp(24px,40.9cqh,72px);font-weight:900;line-height:.85;letter-spacing:-.01em;
+              padding:clamp(6px,calc(7.66 * var(--u)),20px) var(--gap)}
+.phpct{font-size:clamp(24px,calc(40.9 * var(--u)),224px);font-weight:900;line-height:.85;letter-spacing:-.01em;
        font-variant-numeric:tabular-nums;flex:none}
-.phpct small{font-size:26px;font-weight:700;opacity:.65;margin-left:.06em}
-.phlab{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:13px;
+/* em, not cqh: this hangs off .phpct and should track it exactly. */
+.phpct small{font-size:.41em;font-weight:700;opacity:.65;margin-left:.06em}
+.phlab{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+       font-size:clamp(6px,calc(8.3 * var(--u)),46px);
        letter-spacing:.18em;text-transform:uppercase;color:var(--slate);
        flex:none;padding-right:var(--gap);border-right:1px solid var(--rail);
        align-self:stretch;display:flex;flex-direction:column;
        justify-content:center;gap:.35em}
 .phnums{display:flex;gap:calc(var(--gap)*1.3);flex:none}
-.phn .v{font-size:clamp(13px,17.2cqh,29px);font-weight:800;
+.phn .v{font-size:clamp(12px,calc(17.2 * var(--u)),94px);font-weight:800;
         font-variant-numeric:tabular-nums;line-height:1.05}
-.phn .k{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:12.5px;
+.phn .k{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+        font-size:clamp(6px,calc(7.98 * var(--u)),44px);
         letter-spacing:.15em;color:var(--slate);text-transform:uppercase}
 .phtop{flex:1;min-width:0}
-.phtop .d{font-size:20px;font-weight:700;white-space:nowrap;overflow:hidden;
+.phtop .d{font-size:clamp(9px,calc(12.77 * var(--u)),70px);font-weight:700;
+          white-space:nowrap;overflow:hidden;
           text-overflow:ellipsis;color:#cdc2b2}
 /* Sparkline as flexed bars rather than a canvas: 24 divs cost nothing and
    need no redraw loop on a Pi that already runs two. */
-.phspark{display:flex;align-items:flex-end;gap:2px;height:44px;flex:none;
-         width:190px}
+/* Height off cqh, width off cqi: the sparkline should get taller in a tall
+   slot and longer in a wide one, not take both from one axis. */
+.phspark{display:flex;align-items:flex-end;gap:clamp(1px,calc(1.28 * var(--u)),4px);
+         height:clamp(20px,calc(28.09 * var(--u)),74px);flex:none;
+         width:clamp(90px,calc(121.4 * var(--u)),320px)}
 .phspark i{flex:1;background:var(--rail);border-radius:1px;min-height:2px}
 .phspark i b{display:block;width:100%;background:var(--sodium);border-radius:1px}
 #pihole.off .phpct{color:var(--slate)}
@@ -496,7 +637,7 @@ body.no-media #media{display:none}
 #media > header,#media .body{position:relative;z-index:2}
 #media > header{background:rgba(18,14,11,.42);backdrop-filter:blur(8px)}
 #media .body{flex-direction:row;gap:calc(var(--gap)*1.3);align-items:center;
-             padding:14px var(--gap)}
+             padding:clamp(7px,calc(8.94 * var(--u)),24px) var(--gap)}
 #poster{height:100%;aspect-ratio:2/3;border-radius:calc(var(--r)*.6);
         object-fit:cover;background:var(--sunk);flex:none;
         box-shadow:0 12px 30px -8px rgba(0,0,0,.75),
@@ -508,16 +649,21 @@ body.no-media #media{display:none}
    in the same track and overlapped. */
 .meta{display:grid;grid-template-columns:auto 1fr auto;
       grid-template-rows:auto auto auto;align-items:center;
-      gap:4px 1.4em;min-width:0;flex:1;align-content:center}
-.meta .title{grid-row:1;grid-column:1;font-size:34px;font-weight:700;line-height:1.05;
+      gap:clamp(2px,calc(2.55 * var(--u)),8px) 1.4em;min-width:0;flex:1;align-content:center}
+.meta .title{grid-row:1;grid-column:1;font-size:clamp(15px,calc(21.7 * var(--u)),119px);
+             font-weight:700;line-height:1.05;
              text-transform:uppercase;letter-spacing:.01em;white-space:nowrap;
-             overflow:hidden;text-overflow:ellipsis;max-width:34vw}
+             /* cqi, not vw: #app is a fixed 1920px stage that gets transform-scaled, so
+   vw measures the browser window rather than the card, and the cap lands in
+   the wrong place on any screen that is not exactly 1080p. */
+             overflow:hidden;text-overflow:ellipsis;max-width:calc(416.6 * var(--u))}
 .meta .ep{grid-row:1;grid-column:2;color:#cbb9a6;font-size:.95em;letter-spacing:.02em;
           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .meta .who{grid-row:1;grid-column:3;color:var(--sodium);font-weight:700;
            letter-spacing:.06em;white-space:nowrap}
-.prog{grid-row:2;grid-column:1/4;height:8px;border-radius:4px;background:var(--rail);
-      margin-top:6px}
+.prog{grid-row:2;grid-column:1/4;height:clamp(4px,calc(5.11 * var(--u)),14px);
+      border-radius:99px;background:var(--rail);
+      margin-top:clamp(3px,calc(3.83 * var(--u)),10px)}
 .prog i{display:block;height:100%;border-radius:.25em;background:var(--sodium)}
 .left{grid-row:3;grid-column:1/4;font-size:.78em;color:var(--slate);margin-top:3px}
 
@@ -527,35 +673,40 @@ body.no-media #media{display:none}
 /* stretch, not center: with centred children the row height is indefinite,
    so the poster's height:100% fell back to its natural 600px and swallowed
    half the strip. */
-.stream{display:flex;align-items:stretch;gap:16px;flex:1;min-width:0}
+.stream{display:flex;align-items:stretch;gap:clamp(8px,calc(10.21 * var(--u)),28px);flex:1;min-width:0}
 .stream + .stream{border-left:1px solid rgba(255,255,255,.16);
                   padding-left:var(--gap)}
 /* Sized by width, not height: a percentage height against an indefinite row
    resolves to the image's natural 600px, which ate half the strip. */
-.stream .art{width:82px;height:auto;aspect-ratio:2/3;border-radius:9px;
+.stream .art{width:clamp(38px,calc(52.34 * var(--u)),140px);height:auto;aspect-ratio:2/3;
+             border-radius:9px;
              object-fit:cover;background:var(--sunk);flex:0 0 auto;
              align-self:center;
              box-shadow:0 10px 24px -8px rgba(0,0,0,.7),
                         0 0 0 1px rgba(255,255,255,.08)}
 .stream .art[data-empty]{display:none}
-.sinfo{display:flex;flex-direction:column;justify-content:center;gap:3px;
+.sinfo{display:flex;flex-direction:column;justify-content:center;
+       gap:clamp(2px,calc(1.91 * var(--u)),6px);
        min-width:0;flex:1}
-.stitle{font-size:30px;font-weight:700;text-transform:uppercase;line-height:1.05;
+.stitle{font-size:clamp(13px,calc(19.15 * var(--u)),105px);font-weight:700;
+        text-transform:uppercase;line-height:1.05;
         letter-spacing:.01em;white-space:nowrap;overflow:hidden;
         text-overflow:ellipsis}
-.ssub{font-size:16px;color:#cbb9a6;white-space:nowrap;overflow:hidden;
+.ssub{font-size:clamp(7px,calc(10.21 * var(--u)),56px);color:#cbb9a6;
+      white-space:nowrap;overflow:hidden;
       text-overflow:ellipsis}
-.swho{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
+.swho{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+      font-size:clamp(6px,calc(8.94 * var(--u)),49px);
       letter-spacing:.16em;color:var(--sodium)}
-.stream .prog{margin-top:5px;height:7px}
-#media[data-n="2"] .stitle{font-size:26px}
-#media[data-n="3"] .stitle{font-size:21px}
-#media[data-n="3"] .ssub{font-size:14px}
+.stream .prog{margin-top:clamp(2px,calc(3.19 * var(--u)),9px);height:clamp(3px,calc(4.47 * var(--u)),12px)}
+#media[data-n="2"] .stitle{font-size:clamp(12px,calc(16.6 * var(--u)),91px)}
+#media[data-n="3"] .stitle{font-size:clamp(9px,calc(13.4 * var(--u)),73px)}
+#media[data-n="3"] .ssub{font-size:clamp(6px,calc(8.94 * var(--u)),49px)}
 
 /* --------------------------------------------------------- unavailable
    A dead source says so. It never borrows the look of live data. */
 .down{flex:1;display:grid;place-items:center;text-align:center;color:var(--slate)}
-.down b{display:block;font-size:40px;color:var(--dust);
+.down b{display:block;font-size:clamp(18px,calc(25.53 * var(--u)),140px);color:var(--dust);
         letter-spacing:.1em;margin-bottom:.25em}
 .pill{font-size:.68em;font-weight:800;letter-spacing:.14em;color:#1a1509;
       background:var(--sodium);border-radius:.4em;padding:.2em .55em}
@@ -574,9 +725,14 @@ body.no-media #media{display:none}
 <div id="stage">
 <div id="app">
   <canvas id="dust"></canvas>
-  <!-- Fixed furniture, not a module: the clock and the staleness tell sit
-       outside the slot system so no arrangement can remove them. -->
-  <div id="clock"><span id="clockT">--:--</span><span id="clockD"></span></div>
+  <!-- The staleness tell is fixed furniture: it sits outside the slot system
+       so no arrangement can remove it.
+
+       The corner clock is the fallback. It costs no cells and cannot be
+       arranged away, so the board always shows the time — but it stands down
+       the moment the clock module is given a slot, because two clocks a
+       rounding-error apart reads as a fault rather than a feature. -->
+  <div id="cornerclock"><span class="t">--:--</span><span class="d"></span></div>
   <div id="stale" hidden></div>
 
   <div id="flag" class="standby">
@@ -636,6 +792,35 @@ body.no-media #media{display:none}
     <div class="body" id="phBody"></div>
   </section>
 
+  <!-- Starts hidden: it has no fallback grid span in the stylesheet, so if
+       layout.json fails to load it must not land in the auto-flow and shove
+       the other cards sideways. A slot clears data-hide. -->
+  <section class="card" id="clock" data-hide="1">
+    <div class="body">
+      <div class="ct"><span id="clkT">--:--</span><span class="cm" id="clkM"></span></div>
+      <div class="cd" id="clkD"></div>
+      <div class="csec"><i id="clkS"></i></div>
+    </div>
+  </section>
+
+  <section class="card" id="system" data-hide="1">
+    <div class="body">
+      <div class="hhead"><span class="hdot"></span><span class="hword" id="sysWord">—</span>
+           <span class="eyebrow right" id="sysUp"></span></div>
+      <div class="hnote" id="sysNote"></div>
+      <div class="hstats" id="sysBody"></div>
+    </div>
+  </section>
+
+  <section class="card" id="net" data-hide="1">
+    <div class="body">
+      <div class="hhead"><span class="hdot"></span><span class="hword" id="netWord">—</span>
+           <span class="eyebrow right" id="netLink"></span></div>
+      <div class="hnote" id="netNote"></div>
+      <div class="hstats" id="netBody"></div>
+    </div>
+  </section>
+
   <section class="card" id="media">
     <div class="backdrop" id="backdrop"></div>
     <div class="scrim"></div>
@@ -646,7 +831,7 @@ body.no-media #media{display:none}
 </div>
 
 <script>
-const ALL_MODULES = ["flag","racing","weather","radar","wire","media","services","pihole","gallery"];
+const ALL_MODULES = ["flag","racing","weather","radar","wire","media","services","pihole","gallery","clock","system","net"];
 const $ = s => document.querySelector(s);
 /* Headlines are the only strings on the board that come from outside the
    house. Six third-party feeds put an ampersand or a stray bracket in a
@@ -1205,12 +1390,67 @@ async function loadAlerts(){
 /* ---------------------------------------------------------------- clock
    Ticks locally rather than from state.json, so it stays right even when
    nothing is being fetched. */
+let clkOpts = {fmt:"12", secs:"off", date:"long"};
+let clkTimer = null, clkRate = 0, clkLastSec = -1;
+
+function clockApplyOpts(o){
+  clkOpts = Object.assign({fmt:"12", secs:"off", date:"long"}, o || {});
+  const el = $("#clock");
+  if(el){
+    el.dataset.secs = clkOpts.secs;
+    el.dataset.date = clkOpts.date;
+  }
+  armClock();
+}
+
+/* One timer, two rates. Seconds need 1s; without them 10s is plenty and
+   costs a tenth of the wakeups on a Pi that is also decoding video. */
+function armClock(){
+  const want = (clkOpts.secs === "on") ? 1000 : 10000;
+  if(clkTimer && clkRate === want) return;
+  clearInterval(clkTimer);
+  clkRate = want;
+  clkTimer = setInterval(tickClock, want);
+  tickClock();
+}
+
 function tickClock(){
   const t = new Date();
-  const hh = t.getHours() % 12 || 12;
-  $("#clockT").textContent = hh + ":" + String(t.getMinutes()).padStart(2,"0");
-  $("#clockD").textContent = t.toLocaleDateString(undefined,
-    {weekday:"short", month:"short", day:"numeric"});
+  const h24 = t.getHours(), mm = String(t.getMinutes()).padStart(2,"0");
+
+  // Corner fallback is always 12-hour and short-form: it is small, and it is
+  // not the thing anyone configured.
+  const c = $("#cornerclock");
+  if(c){
+    c.querySelector(".t").textContent = (h24 % 12 || 12) + ":" + mm;
+    c.querySelector(".d").textContent = t.toLocaleDateString(undefined,
+      {weekday:"short", month:"short", day:"numeric"});
+  }
+
+  const mt = $("#clkT");
+  if(!mt) return;
+  const h12 = clkOpts.fmt === "24";
+  mt.textContent = (h12 ? String(h24).padStart(2,"0") : (h24 % 12 || 12)) + ":" + mm;
+  $("#clkM").textContent = h12 ? "" : (h24 < 12 ? "AM" : "PM");
+
+  const d = $("#clkD");
+  if(clkOpts.date === "long"){
+    d.textContent = t.toLocaleDateString(undefined,
+      {weekday:"long", month:"long", day:"numeric"});
+  }else{
+    d.textContent = t.toLocaleDateString(undefined,
+      {weekday:"short", month:"short", day:"numeric"});
+  }
+
+  if(clkOpts.secs === "on"){
+    const s = t.getSeconds();
+    // Kill the transition for the 59->0 step only, so the bar snaps to empty
+    // instead of sliding backwards across the whole card.
+    const wrap = s < clkLastSec;
+    $("#clock").dataset.wrap = wrap ? "1" : "";
+    $("#clkS").style.width = (s / 60 * 100).toFixed(1) + "%";
+    clkLastSec = s;
+  }
 }
 
 /* ---------------------------------------------------------------- stale
@@ -1236,6 +1476,148 @@ function checkStale(){
     const mins = Math.round(age/60000);
     el.textContent = "Board data " + mins + " min old — not updating";
   }
+}
+
+/* -------------------------------------------------------- health cards
+   Pi health and Network render from one payload (state.sysnet) into two
+   cards. Kept as one function pair rather than two independent renderers
+   because the verdict is computed over both halves on the Pi — a full disk
+   and a dead gateway are the same kind of news — and splitting the render
+   would mean deciding twice which card owns which note. */
+
+function human(n, unit){
+  /* Bits per second and bytes both want the same treatment, and a wall is
+     not the place for six significant figures. */
+  const u = unit || ["", "K", "M", "G", "T"];
+  let i = 0, v = Number(n) || 0;
+  while(v >= 1000 && i < u.length - 1){ v /= 1000; i++; }
+  // parseFloat, not toFixed: 98.0Kb next to 432Kb looks like a different
+  // kind of number rather than the same one a bit smaller.
+  return (v >= 100 || i === 0 ? Math.round(v) : parseFloat(v.toFixed(1))) + u[i];
+}
+
+function dur(sec){
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
+  if(d >= 1) return d + "d " + h + "h";
+  const m = Math.floor(s % 3600 / 60);
+  return h >= 1 ? h + "h " + m + "m" : m + "m";
+}
+
+/* One reading: value, label, and optionally a fullness bar with its own
+   warn/bad shading. Thresholds live here rather than in CSS so the bar and
+   the number can never disagree about what counts as bad. */
+function stat(value, label, pct, warn, bad){
+  const has = pct !== undefined && pct !== null && isFinite(pct);
+  let cls = "hstat";
+  if(has && bad !== undefined && pct >= bad) cls += " bad";
+  else if(has && warn !== undefined && pct >= warn) cls += " warn";
+  return '<div class="' + cls + '"><b>' + value + '</b><span>' + label + '</span>'
+       + (has ? '<div class="hbar"><i style="width:'
+                + Math.max(0, Math.min(100, pct)).toFixed(0) + '%"></i></div>' : '')
+       + '</div>';
+}
+
+function healthHead(card, wordEl, noteEl, d, okWord){
+  /* Anything that isn't a level we recognise is "unknown". An absent
+     state.sysnet — old board.py, or the service not restarted yet — used to
+     fall through to the green branch and claim the Pi was healthy on the
+     strength of no evidence whatsoever. */
+  const known = ["ok", "warn", "bad"];
+  const lvl = known.includes(d && d.level) ? d.level : "unknown";
+  card.dataset.level = lvl;
+  const notes = (d && d.notes) || [];
+  /* The verdict is the headline. When it's bad the first note becomes the
+     word itself, because "BAD" tells you nothing you can act on. */
+  if(lvl === "unknown"){
+    wordEl.textContent = "No data";
+    noteEl.textContent = "";
+  }else if(notes.length){
+    wordEl.textContent = notes[0];
+    noteEl.textContent = notes.slice(1).join(" \u00b7 ");
+  }else{
+    wordEl.textContent = okWord;
+    noteEl.textContent = "";
+  }
+}
+
+function renderSystem(d){
+  const card = $("#system");
+  if(!card) return;
+  d = d || {};
+  /* Split the verdict: the Pi card should not lead with a network problem,
+     and vice versa, or both cards say the same thing and one of them is
+     lying about whose fault it is. */
+  const netWords = /gateway|internet|tailscale|down$|loss/i;
+  const mine = (d.notes || []).filter(n => !netWords.test(n));
+  /* Evidence is checked per card, not per document. sysnet computes one
+     verdict over both halves, so a payload with temperatures but no ping
+     result would otherwise hand the network card a green light it never
+     earned — and vice versa. */
+  const sysSeen = d.temp_c != null || (d.mem || {}).pct != null
+                  || (d.disks || []).length > 0;
+  healthHead(card, $("#sysWord"), $("#sysNote"),
+             {level: mine.length ? d.level : (sysSeen ? "ok" : null), notes: mine},
+             "Pi healthy");
+
+  $("#sysUp").textContent = d.uptime_s != null ? "UP " + dur(d.uptime_s) : "";
+
+  const out = [];
+  if(d.temp_c != null){
+    /* Scaled 30-85C, not 0-85: a Pi idling at 48C is not "over half way to
+       melting", and a bar that says it is trains you to ignore the bar. 85 is
+       the hard throttle, 30 is about as cool as this thing is ever seen. */
+    const tp = v => (v - 30) / 55 * 100;
+    out.push(stat(d.temp_c + "\u00b0", "CPU TEMP", tp(d.temp_c), tp(70), tp(80)));
+  }
+  if(d.cpu_pct != null)
+    out.push(stat(Math.round(d.cpu_pct) + "%", "CPU", d.cpu_pct, 80, 92));
+  else if(d.load)
+    out.push(stat(d.load[0].toFixed(2), "LOAD 1M",
+                  d.cores ? d.load[0] / d.cores * 100 : null, 85, 110));
+  if(d.mem)
+    out.push(stat(Math.round(d.mem.pct) + "%", "MEMORY", d.mem.pct, 85, 94));
+  (d.disks || []).forEach(k => {
+    /* "/" is the boot disk to a human, not a path. */
+    const name = k.mount === "/" ? "BOOT DISK"
+               : k.mount.replace(/^.*\//, "").toUpperCase() || k.mount;
+    out.push(stat(k.free_gb >= 100 ? Math.round(k.free_gb) + "G" : k.free_gb + "G",
+                  name + " FREE", k.pct, 85, 93));
+  });
+  $("#sysBody").innerHTML = out.join("");
+}
+
+function renderNet(d){
+  const card = $("#net");
+  if(!card) return;
+  d = d || {};
+  const n = d.net || {};
+  const netWords = /gateway|internet|tailscale|down$|loss/i;
+  const mine = (d.notes || []).filter(n2 => netWords.test(n2));
+  const netSeen = (n.gw || {}).loss != null || (n.wan || {}).loss != null;
+  healthHead(card, $("#netWord"), $("#netNote"),
+             {level: mine.length ? d.level : (netSeen ? "ok" : null), notes: mine},
+             "Network up");
+
+  const bits = [];
+  if(n.iface) bits.push(n.iface);
+  if(n.speed_mbps) bits.push(n.speed_mbps >= 1000
+    ? (n.speed_mbps / 1000) + "G" : n.speed_mbps + "M");
+  else if(n.wifi) bits.push("WI-FI");
+  $("#netLink").textContent = bits.join(" \u00b7 ");
+
+  const out = [];
+  const gw = n.gw || {}, wan = n.wan || {};
+  if(gw.ms != null) out.push(stat(gw.ms + "ms", "GATEWAY"));
+  else if(gw.loss != null) out.push(stat("\u2014", "GATEWAY"));
+  if(wan.ms != null) out.push(stat(wan.ms + "ms", "INTERNET",
+                                   wan.ms / 250 * 100, 48, 100));
+  else if(wan.loss != null) out.push(stat("\u2014", "INTERNET", 100, 48, 100));
+  if(n.rx_bps != null) out.push(stat(human(n.rx_bps) + "b", "DOWN NOW"));
+  if(n.tx_bps != null) out.push(stat(human(n.tx_bps) + "b", "UP NOW"));
+  const ts = n.tailscale;
+  if(ts) out.push(stat(ts.up ? ts.online + "/" + ts.peers : "OFF", "TAILSCALE"));
+  $("#netBody").innerHTML = out.join("");
 }
 
 /* ---------------------------------------------------------------- slots
@@ -1327,9 +1709,15 @@ function applyLayout(doc){
     });
   });
 
+  // The corner clock stands down only if the module actually holds a slot.
+  // "not shown" leaves it in doc.off, not in a slot, so the fallback stays.
+  app.dataset.clockslot =
+    slots.some(s => (s.modules || []).includes("clock")) ? "1" : "";
+
   if(doc.opts){
     glApplyOpts(doc.opts.gallery);
     wireApplyOpts(doc.opts.wire);
+    clockApplyOpts(doc.opts.clock);
   }
   runSlots();
 }
@@ -1582,6 +1970,8 @@ async function load(){
     renderRadar(s.radar);
     renderServices(s.services);
     renderPihole(s.pihole);
+    renderSystem(s.sysnet);
+    renderNet(s.sysnet);
     renderMedia(s.jellyfin);
     refreshSlots();      // a stream may have just claimed or freed its slot
     const next = (s.weather||{}).sky || "clear";
@@ -1595,7 +1985,7 @@ async function load(){
   }
 }
 seedDrops(); paintSky(); buildBase(); load(); setInterval(load, POLL);
-tickClock(); setInterval(tickClock, 10000);
+armClock();   /* sets the interval and paints immediately */
 loadAlerts(); setInterval(loadAlerts, ALERT_POLL);
 setInterval(checkStale, 15000);
 loadLayout(); setInterval(loadLayout, LAYOUT_POLL);

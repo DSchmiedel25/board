@@ -767,9 +767,16 @@ def screen_services(dirt, bath, wx, cal, phase=0):
     img, d = canvas()
 
     if svc.get("offline") or not svc.get("rows"):
+        why = svc.get("reason") or "NO ANSWER"
         draw_bar(d, RAIL, "NO KUMA", DUST)
-        draw_centered(d, "STATUS PAGE", 28, SLATE, 1)
-        draw_centered(d, "UNREACHABLE", 38, SLATE, 1)
+        if why == "NO MONITORS":
+            draw_centered(d, "STATUS PAGE", 26, SLATE, 1)
+            draw_centered(d, "HAS NO", 34, SLATE, 1)
+            draw_centered(d, "MONITORS", 42, SLATE, 1)
+        else:
+            draw_centered(d, "NO ANSWER ON", 26, SLATE, 1)
+            draw_centered(d, ":3001", 34, SLATE, 1)
+            draw_centered(d, "CHECK SERVICE", 42, SLATE, 1)
         return img
 
     rows, down = svc["rows"], svc.get("down") or []
@@ -1326,7 +1333,7 @@ def fetch():
         wx["nascar"] = keep_podium(_nascar.build(raw_n, get=_get))
     if radar:
         wx["radar"] = radar
-    wx["services"] = svc or {"offline": True}
+    wx["services"] = svc or {"offline": True, "reason": "NO ANSWER"}
 
     snapshot(dirt, bath, wx)
 
@@ -1388,15 +1395,14 @@ def keep_podium(nc):
 
 
 def fetch_services():
-    """Uptime Kuma via its public status page. Tries the single-call summary
-    endpoint first and falls back to the older config+heartbeat pair, since
-    summary arrived late and a Pi may be running an older build."""
+    """Uptime Kuma via its public status page. Two public routes exist and
+    both are needed: the page config carries the monitor names, the heartbeat
+    call carries their current state and 24h uptime."""
     import kuma
     u = kuma.urls()
-    summary = _get(u["summary"], None, "services")
+    config = _get(u["config"], None, "services")
     beat = _get(u["beat"], None, "services beat")
-    config = None if summary else _get(u["config"], None, "services config")
-    return kuma.build(summary=summary, config=config, beat=beat)
+    return kuma.build(config=config, beat=beat)
 
 
 def fetch_radar():

@@ -34,6 +34,10 @@ NEWS_FEEDS = [
 # their own screen on the Pixoo.
 CALENDAR_SKIP = ("albany-saratoga", "fonda", "lebanon valley")
 
+# Uptime Kuma. Override in local_config.py if it isn't on this box.
+KUMA_URL = "http://localhost:3001"
+KUMA_SLUG = "board"
+
 # ---------------------------------------------------------------- behavior
 
 DAY_BRIGHTNESS = 75                   # 0-100

@@ -27,3 +27,8 @@ PIHOLE_TOKEN = ""                # v5 only
 # Calendar -> copy link, then change webcal:// to https://
 # Leave blank if you don't use the calendar.
 ICS_URL = ""
+
+# Uptime Kuma. Only set these if Kuma is NOT on this box at port 3001, or if
+# your published status page uses a slug other than "board".
+# KUMA_URL = "http://192.168.1.xxx:3001"
+# KUMA_SLUG = "board"

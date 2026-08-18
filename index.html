@@ -59,10 +59,12 @@ body{
   /* Now playing is a strip along the bottom rather than a fourth box in the
      left column — stacking four cards there squeezed the track rows into
      each other and clipped the last NASCAR series. */
-  grid-template-rows:auto 1.15fr 1fr 128px 152px;
-  grid-template-columns:1.32fr 1fr;
-  grid-template-areas:"flag flag" "tracks weather" "nascar weather"
-                      "wire wire" "media media";
+  /* 12 x 18 uniform cells; every card's position comes from layout.json at
+     runtime. Named areas can't express an arbitrary rectangle, which is what
+     dragging produces. These are the fallback values used for the one poll
+     cycle before layout.json arrives, and if it never does. */
+  grid-template-columns:repeat(12,1fr);
+  grid-template-rows:repeat(18,1fr);
 }
 /* With nothing playing, the weather column grows downward rather than the
    race rows stretching across the full width — three items spread over
@@ -72,6 +74,8 @@ body{
 /* The bottom strip is always present: what's playing, or service health when
    nothing is. Only the inner card swaps. */
 body.no-media #media{display:none}
+/* Set by the layout resolver, not by hand. */
+#app > [data-off="1"],#app > [data-lose="1"]{display:none!important}
 .card{background:var(--panel);border-radius:var(--r);overflow:hidden;
       display:flex;flex-direction:column;min-height:0}
 .card > header{padding:.7em 1.1em;display:flex;align-items:baseline;gap:1em;
@@ -86,7 +90,7 @@ body.no-media #media{display:none}
    The flag strip is the whole point: one field, full width, that answers
    "is racing happening" from the doorway. Everything else is subordinate.
    On a green night it moves. */
-#flag{grid-area:flag;border-radius:var(--r);position:relative;overflow:hidden;
+#flag{grid-column:1/span 12;grid-row:1/span 3;border-radius:var(--r);position:relative;overflow:hidden;
       display:flex;align-items:center;gap:1.2em;
       padding:1em 1.2em;background:var(--sunk)}
 #flag .word{font-size:96px;font-weight:900;line-height:.92;
@@ -120,7 +124,7 @@ body.no-media #media{display:none}
 @keyframes march{to{background-position:48px 0}}
 
 /* ------------------------------------------------------------- tracks */
-#tracks{grid-area:tracks}
+#tracks{grid-column:1/span 7;grid-row:4/span 6}
 /* Fixed columns rather than `1fr` pushing the times to the far edge — across
    a 1000px panel that opens a canyon between the name and the status. */
 .track{display:grid;grid-template-columns:6px 470px 190px 1fr;gap:0 1.5em;
@@ -157,7 +161,7 @@ body.no-media #media{display:none}
                 50%{box-shadow:inset 0 0 44px -14px rgba(247,167,44,.55)}}
 
 /* ------------------------------------------------------------ weather */
-#weather{grid-area:weather;position:relative;background:#1d3a63}
+#weather{grid-column:8/span 5;grid-row:4/span 10;position:relative;background:#1d3a63}
 #weather .body{position:relative;z-index:2}
 #sky{position:absolute;inset:0;z-index:0;width:100%;height:100%}
 #weather header{background:rgba(0,0,0,.28);position:relative;z-index:2}
@@ -204,7 +208,7 @@ body.no-media #media{display:none}
                color:inherit}
 
 /* ------------------------------------------------------------- nascar */
-#nascar{grid-area:nascar}
+#nascar{grid-column:1/span 7;grid-row:10/span 4}
 #nascar .body{flex-direction:row;gap:var(--gap)}
 .series{flex:1.15;display:flex;flex-direction:column;gap:.5em;min-width:0;
         justify-content:space-around}
@@ -260,7 +264,7 @@ body.no-media #media{display:none}
    the obvious move and the wrong one: anything in constant motion at the
    edge of vision pulls your eye off whatever you were actually reading.
    These sit still for 22 seconds and then cross-fade. */
-#wire{grid-area:wire}
+#wire{grid-column:1/span 12;grid-row:14/span 2}
 #wire > header{display:none}          /* 128px tall; a header eats a third */
 #wire .body{flex-direction:row;align-items:stretch;gap:var(--gap);
             padding:14px var(--gap)}
@@ -285,10 +289,43 @@ body.no-media #media{display:none}
 .wtime{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
        color:var(--slate);flex:none}
 .wnone{color:var(--slate);font-size:20px;align-self:center}
+/* Marquee: the rows are laid end to end on one line and translated. The set
+   is duplicated so the loop is seamless — a scroll that snapped back to the
+   start would read as a glitch, the same reason the NASCAR field roll is
+   doubled. */
+#wire[data-mode="marquee"] .wrap{flex-direction:row;flex-wrap:nowrap;
+  overflow:hidden;align-items:center;
+  -webkit-mask-image:linear-gradient(90deg,#0000,#000 3%,#000 97%,#0000);
+          mask-image:linear-gradient(90deg,#0000,#000 3%,#000 97%,#0000)}
+#wire[data-mode="marquee"] .wrow{flex:0 0 auto;padding-right:3em;
+  animation:wmarch linear infinite;opacity:1}
+#wire[data-mode="marquee"] .wtitle{white-space:nowrap;overflow:visible;flex:0 0 auto}
+@keyframes wmarch{to{transform:translateX(-100%)}}
+
+/* -------------------------------------------------------------- gallery
+   Two stacked layers so one item can fade into the next without either
+   flickering through the background. Each layer holds its own blurred
+   backdrop, because the fill has to travel with the image it belongs to. */
+#gallery{grid-column:1/span 12;grid-row:1/span 13;position:relative;
+         overflow:hidden;background:#080706}
+#gallery > header{display:none}
+#gallery .body{padding:0;position:relative}
+.gl{position:absolute;inset:0;opacity:0;transition:opacity .9s ease}
+.gl.on{opacity:1}
+.gl .back{position:absolute;inset:0;background-size:cover;background-position:center;
+          filter:blur(60px) saturate(1.8) brightness(.5);transform:scale(1.35)}
+.gl img,.gl video{position:absolute;inset:0;width:100%;height:100%;
+                  object-fit:contain;z-index:1}
+#gallery[data-fit="cover"] .gl img,#gallery[data-fit="cover"] .gl video{
+  object-fit:cover}
+#gallery[data-fit="cover"] .gl .back{display:none}
+.glnone{position:absolute;inset:0;display:flex;align-items:center;
+        justify-content:center;color:var(--slate);font-size:26px;
+        text-align:center;padding:2em}
 
 /* -------------------------------------------------------------- media */
 /* Services share the media slot; only one is ever visible. */
-#services{grid-area:media;position:relative;overflow:hidden}
+#services{grid-column:1/span 12;grid-row:16/span 3;position:relative;overflow:hidden}
 /* .card sets display:flex, which outranks the hidden attribute's default */
 #services[hidden]{display:none}
 #services .body{flex-direction:row;align-items:center;gap:var(--gap)}
@@ -307,7 +344,7 @@ body.no-media #media{display:none}
       color:var(--slate)}
 .svcnone{color:var(--slate);font-size:20px}
 
-#media{grid-area:media;position:relative;overflow:hidden}
+#media{grid-column:1/span 12;grid-row:16/span 3;position:relative;overflow:hidden}
 /* No card header on the strip: at 152px tall it would eat half the space,
    so the label rides inline with the title instead. */
 #media > header{display:none}
@@ -434,6 +471,13 @@ body.no-media #media{display:none}
   <section class="card" id="nascar">
     <header><h2 id="ncVenue">NASCAR</h2><span class="eyebrow right">Next race per series</span></header>
     <div class="body" id="ncBody"></div>
+  </section>
+
+  <section class="card" id="gallery">
+    <div class="body">
+      <div class="gl" id="glA"></div>
+      <div class="gl" id="glB"></div>
+    </div>
   </section>
 
   <section class="card" id="wire">
@@ -710,11 +754,210 @@ function renderMedia(jf){
   $("#mediaBody").innerHTML = `<div class="streams">${cells}</div>`;
 }
 
+/* -------------------------------------------------------------- gallery
+   Photos, GIFs-turned-MP4 and clips, from wall/index.json. Two layers swap
+   so the outgoing item is still on screen while the incoming one loads —
+   a single element flashes the background between items.
+
+   Video runs its own length rather than the dwell slider: cutting a clip at
+   an arbitrary 8 seconds looks like a fault. The dwell applies to stills. */
+const GALLERY_POLL = 60000;
+let glItems = [], glOrder = [], glAt = 0, glLayer = 0, glTimer = null,
+    glSig = "", glOpts = {dwell: 8, order: "shuffle", show: ["still","video"], fit: "contain"};
+
+function shuffle(a){
+  for(let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function glBuildOrder(){
+  const want = glOpts.show || ["still","video"];
+  const pool = glItems
+    .map((it, i) => [it, i])
+    .filter(([it]) => want.includes(it.type))
+    .map(([, i]) => i);
+  glOrder = glOpts.order === "sequence" ? pool : shuffle(pool.slice());
+  glAt = 0;
+}
+
+/* The board runs two requestAnimationFrame canvas loops. Adding H.264 decode
+   on top is where a Pi 4 starts dropping frames, so the dust layer stands
+   down while a clip is playing and comes back when it ends. */
+function glDust(off){
+  const d = document.getElementById("dust");
+  if(d) d.style.display = off ? "none" : "";
+}
+
+function glNext(){
+  clearTimeout(glTimer);
+  const host = $("#gallery");
+  if(!glOrder.length){
+    $("#glA").innerHTML = `<div class="glnone">Nothing uploaded yet</div>`;
+    $("#glA").classList.add("on"); $("#glB").classList.remove("on");
+    glDust(false);
+    return;
+  }
+  const it = glItems[glOrder[glAt % glOrder.length]];
+  glAt = (glAt + 1) % glOrder.length;
+  if(glAt === 0 && glOpts.order !== "sequence") glBuildOrder();   // reshuffle each pass
+
+  const next = glLayer ? $("#glA") : $("#glB");
+  const cur  = glLayer ? $("#glB") : $("#glA");
+  const url = "data/wall/" + it.file;
+  let hold = (glOpts.dwell || 8) * 1000;
+
+  if(it.type === "video"){
+    glDust(true);
+    next.innerHTML = `<video src="${url}" autoplay muted loop playsinline></video>`;
+    // Its own duration, floored so a one-second GIF doesn't strobe.
+    hold = Math.max(4, it.dur || 8) * 1000;
+  }else{
+    glDust(false);
+    next.innerHTML = `<div class="back" style="background-image:url('${url}')"></div>
+                      <img src="${url}" alt="" decoding="async">`;
+  }
+  host.dataset.fit = glOpts.fit || "contain";
+  next.classList.add("on"); cur.classList.remove("on");
+  glLayer = glLayer ? 0 : 1;
+  // Free the decoder on the layer that just left, or a long rotation ends up
+  // holding every clip it has ever played.
+  setTimeout(() => { if(!cur.classList.contains("on")) cur.innerHTML = ""; }, 1000);
+  glTimer = setTimeout(glNext, hold);
+}
+
+async function loadGallery(){
+  try{
+    const r = await fetch("data/wall/index.json?t="+Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const sig = JSON.stringify((d.items||[]).map(i => i.file));
+    if(sig !== glSig){ glSig = sig; glItems = d.items || []; glBuildOrder();
+                       if(!glTimer) glNext(); }
+  }catch(e){
+    if(!glItems.length){ glBuildOrder(); glNext(); }
+  }
+}
+
+/* Settings arrive with the layout, so a change to the dwell slider restarts
+   the rotation on the next poll rather than waiting out the old timer. */
+function glApplyOpts(o){
+  if(!o) return;
+  const before = JSON.stringify(glOpts);
+  glOpts = Object.assign({}, glOpts, o);
+  if(JSON.stringify(glOpts) !== before){ glBuildOrder(); glNext(); }
+}
+
+/* --------------------------------------------------------------- layout
+   Position comes from layout.json, written by the editor on 8081. Applied as
+   inline styles on each card, which outrank the stylesheet's fallback spans —
+   so a missing or unreachable layout.json leaves the board in its default
+   arrangement rather than collapsing every card into cell 1,1.
+
+   Polled on its own short interval because editing is interactive: you drag
+   on the couch and want the wall to agree before you've put the phone down. */
+const LAYOUT_POLL = 10000;
+let layoutSig = "";
+
+function applyLayout(doc){
+  const mods = (doc && doc.modules) || null;
+  if(!mods) return;
+  const sig = JSON.stringify(mods) + ":" + doc.gap;
+  if(sig === layoutSig) return;        // don't touch the DOM on an unchanged poll
+  layoutSig = sig;
+
+  const app = document.getElementById("app");
+  if(typeof doc.gap === "number") app.style.setProperty("--gap", doc.gap + "px");
+
+  if(mods.gallery) glApplyOpts(mods.gallery.opts);
+  if(mods.wire)    wireApplyOpts(mods.wire.opts);
+
+  for(const key in mods){
+    const m = mods[key];
+    const el = document.getElementById(key);
+    if(!el) continue;
+    el.style.gridColumn = m.col + " / span " + m.w;
+    el.style.gridRow    = m.row + " / span " + m.h;
+    /* A module switched off is hidden outright rather than left at zero size:
+       a collapsed card still claims its cells and shoves its neighbours. */
+    el.dataset.off = m.on ? "" : "1";
+    el.dataset.pri = m.priority || 0;
+  }
+  resolveSlots();
+}
+
+/* Overlap is legal — it's how the media strip takes the services slot while
+   something is playing. Cards that share any cell are compared by priority,
+   and only the highest one that currently has something to show stays up. */
+function resolveSlots(){
+  const cards = [...document.querySelectorAll("#app > .card, #app > #flag")]
+    .filter(el => el.dataset.off !== "1");
+  const box = el => {
+    const cs = getComputedStyle(el);
+    const col = parseInt(cs.gridColumnStart) || 1, row = parseInt(cs.gridRowStart) || 1;
+    const w = parseInt((cs.gridColumnEnd||"").replace(/\D/g,"")) || 1;
+    const h = parseInt((cs.gridRowEnd||"").replace(/\D/g,"")) || 1;
+    return {col, row, w, h};
+  };
+  const hits = (a, b) => a.col < b.col+b.w && b.col < a.col+a.w &&
+                         a.row < b.row+b.h && b.row < a.row+a.h;
+  cards.forEach(el => { el.dataset.lose = ""; });
+  for(let i = 0; i < cards.length; i++){
+    for(let j = i+1; j < cards.length; j++){
+      const A = cards[i], B = cards[j];
+      if(!hits(box(A), box(B))) continue;
+      const pa = (+A.dataset.pri||0) + (hasContent(A) ? 100 : 0);
+      const pb = (+B.dataset.pri||0) + (hasContent(B) ? 100 : 0);
+      (pa >= pb ? B : A).dataset.lose = "1";
+    }
+  }
+}
+
+/* "Has something to show" is per-module. Now playing is the only one that
+   genuinely empties out; the rest always have content, so they default true
+   and win on priority alone. */
+function hasContent(el){
+  if(el.id === "media")   return !document.body.classList.contains("no-media");
+  /* An empty gallery must not win a slot from whatever it was stacked under,
+     or an unused board goes blank instead of falling back. */
+  if(el.id === "gallery") return glItems.length > 0;
+  return true;
+}
+
+async function loadLayout(){
+  try{
+    const r = await fetch("data/layout.json?t="+Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    applyLayout(await r.json());
+  }catch(e){ /* stylesheet fallback stands */ }
+}
+
 /* ----------------------------------------------------------------- wire
    news.json is written by fetch.py on the cron cycle, separately from
    state.json, so it is fetched separately and a stalled cron shows as a
    stale age rather than taking the whole board offline. */
-const WIRE_ROWS = 3, WIRE_HOLD = 22000, WIRE_POLL = 300000;
+let WIRE_ROWS = 3, WIRE_HOLD = 22000;
+const WIRE_POLL = 300000;
+let wireTimer = null;
+
+/* Marquee is a single line scrolling continuously; fade is fixed rows that
+   swap. Both are offered because which one is right depends on how tall the
+   slot is — one row of a 12x1 strip can only marquee. */
+function wireApplyOpts(o){
+  if(!o) return;
+  const rows = Math.max(1, Math.min(5, o.rows || 3));
+  const hold = Math.max(6, Math.min(120, o.dwell || 22)) * 1000;
+  const mode = o.mode === "marquee" ? "marquee" : "fade";
+  if(rows === WIRE_ROWS && hold === WIRE_HOLD &&
+     $("#wire").dataset.mode === mode) return;
+  WIRE_ROWS = rows; WIRE_HOLD = hold;
+  $("#wire").dataset.mode = mode;
+  clearInterval(wireTimer);
+  if(mode === "fade") wireTimer = setInterval(cycleWire, WIRE_HOLD);
+  paintWire();
+}
 let wireItems = [], wireAt = 0, wireStamp = 0;
 
 function since(ts){
@@ -988,6 +1231,7 @@ async function load(){
     renderRadar(s.radar);
     renderServices(s.services);
     renderMedia(s.jellyfin);
+    resolveSlots();   // now-playing may have just claimed or freed its slot
     const next = (s.weather||{}).sky || "clear";
     if(next!==sky){ sky=next; seedDrops(); }
   }catch(e){
@@ -999,8 +1243,10 @@ async function load(){
   }
 }
 seedDrops(); paintSky(); buildBase(); load(); setInterval(load, POLL);
+loadLayout(); setInterval(loadLayout, LAYOUT_POLL);
 loadWire(); setInterval(loadWire, WIRE_POLL);
-setInterval(cycleWire, WIRE_HOLD);
+wireTimer = setInterval(cycleWire, WIRE_HOLD);
+loadGallery(); setInterval(loadGallery, GALLERY_POLL);
 </script>
 </body>
 </html>

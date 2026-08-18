@@ -27,11 +27,20 @@ try:
 except ImportError:
     DATA_DIR = "/var/www/html/data"
 
+# The wall board's grid lives in its own module: it has nothing to do with
+# the Pixoo rotation this file otherwise manages, and keeping the editor's
+# markup out of here stops one page's bug from taking the other down.
+import layout as _layout
+import wallmedia as _wall
+
 PORT = 8081
 STATE = os.path.join(DATA_DIR, "screens.json")
 
 PHOTO_DIR = os.path.join(DATA_DIR, "photos")
-MAX_UPLOAD = 12 * 1024 * 1024          # generous for a phone photo
+# Raised from 12MB now that clips are accepted. A 90-second phone video at
+# 1080p lands around 150MB, so this is a real ceiling rather than a formality;
+# anything larger should be trimmed before it comes over the wire.
+MAX_UPLOAD = 200 * 1024 * 1024
 MAX_PHOTOS = 40
 
 SCREENS = [
@@ -382,6 +391,10 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 </style></head><body>
 <h1>Board control</h1>
 <div class="sub">{{STATUS}} <span id="saveflag" class="flag"></span></div>
+<!-- This page controls the Pixoo rotation. The wall board's grid is a
+     different thing entirely, so it gets its own page rather than a section
+     wedged into this one. -->
+<div class="sub"><a href="/layout" style="color:var(--sodium)">Wall layout editor &rarr;</a></div>
 
 <div class="wrap">
 <div class="col c-mir">
@@ -711,6 +724,20 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self.send_error(404)
             return
+        if path.startswith("/wall/"):
+            name = os.path.basename(path[len("/wall/"):])
+            p = os.path.join(_wall.WALL_DIR, name)
+            ctype = ("video/mp4" if name.endswith(".mp4") else
+                     "application/json" if name.endswith(".json") else "image/jpeg")
+            try:
+                with open(p, "rb") as f:
+                    self._send(f.read(), ctype)
+            except OSError:
+                self.send_error(404)
+            return
+        if path == "/layout":
+            self._send(_layout.page().encode())
+            return
         if path == "/frame.png":
             try:
                 with open(os.path.join(DATA_DIR, "frame.png"), "rb") as f:
@@ -724,6 +751,25 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         n = int(self.headers.get("Content-Length") or 0)
 
+        if path == "/wall/delete":
+            raw = self.rfile.read(n).decode()
+            fname = os.path.basename(raw.split("f=", 1)[-1].split("&")[0])
+            _wall.remove(fname)
+            self._page("Removed from the wall gallery")
+            return
+
+        if path == "/layout/save":
+            # Answers JSON, not a redirect to the panel: the editor is a live
+            # canvas and reloading it mid-edit would throw away the selection.
+            try:
+                doc = json.loads(self.rfile.read(n).decode() or "{}")
+                saved = _layout.save(doc)
+                self._send(json.dumps(saved).encode(), "application/json")
+            except Exception as e:
+                self._send(json.dumps({"error": type(e).__name__}).encode(),
+                           "application/json", 400)
+            return
+
         if path == "/upload":
             ctype = self.headers.get("Content-Type", "")
             if n > MAX_UPLOAD or "boundary=" not in ctype:
@@ -736,7 +782,13 @@ class Handler(BaseHTTPRequestHandler):
                 if len(photo_files()) >= MAX_PHOTOS:
                     break
                 try:
-                    save_photo(name, blob)
+                    # Stills feed both devices. Clips are wall-only: there is
+                    # nothing sensible to do with 90 seconds of video on a
+                    # 64x64 panel that shows one frame per rotation.
+                    kind = _wall.kind_of(blob, name)
+                    if kind == "still":
+                        save_photo(name, blob)
+                    _wall.add(name, blob)
                     done += 1
                 except Exception:
                     failed += 1          # a bad file shouldn't lose the rest

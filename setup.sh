@@ -20,7 +20,7 @@ say() { printf '\n\033[1;33m▸ %s\033[0m\n' "$1"; }
 
 say "Installing packages"
 sudo apt-get update -qq
-sudo apt-get install -y -qq nginx python3-pip git
+sudo apt-get install -y -qq nginx python3-pip git ffmpeg
 
 say "Installing Python libraries"
 pip3 install --break-system-packages -q \

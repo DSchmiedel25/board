@@ -392,10 +392,28 @@ h1{font-size:20px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
 #gaps b{color:var(--dust)}
 #gaps.on{background:#241a18;border-color:#d9534a66;color:#e0b6b1}
 #gaps.on b{color:#fff}
-.grip{position:absolute;right:0;bottom:0;width:28px;height:28px;
-      background:linear-gradient(135deg,transparent 46%,var(--sodium) 46%);
-      opacity:0;touch-action:none}
+/* Four corner grips. Dragging the top or left edge moves the slot's origin as
+   well as its size, so the opposite corner stays put — grabbing the top-left
+   and pulling up should extend the slot upward, not drag the whole thing.
+
+   28px is the visual size; the hit area is padded out to 44px with a negative
+   inset so it clears the recommended touch target on a phone without drawing
+   a grip that swamps a small slot. */
+.grip{position:absolute;width:28px;height:28px;opacity:0;touch-action:none}
+.grip:before{content:"";position:absolute;inset:-8px;}
+.grip.se{right:0;bottom:0;
+  background:linear-gradient(135deg,transparent 46%,var(--sodium) 46%)}
+.grip.sw{left:0;bottom:0;
+  background:linear-gradient(45deg,var(--sodium) 46%,transparent 46%)}
+.grip.ne{right:0;top:0;
+  background:linear-gradient(45deg,transparent 54%,var(--sodium) 54%)}
+.grip.nw{left:0;top:0;
+  background:linear-gradient(135deg,var(--sodium) 54%,transparent 54%)}
 .slot.sel .grip{opacity:1}
+/* A slot only 1-2 rows tall is shorter than two stacked grips, and they end up
+   overlapping in the middle where neither is reachable. Below that, keep the
+   two on the bottom edge only. */
+.slot.short .grip.ne, .slot.short .grip.nw{display:none}
 
 .bar{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 6px;align-items:center}
 button{background:var(--sunk);color:var(--dust);border:1px solid var(--rail);
@@ -613,7 +631,9 @@ function buildCanvas(){
     el.className = "slot" + (sel === s.id ? " sel" : "") + (collides(s) ? " bad" : "");
     el.dataset.id = s.id;
     const names = s.modules.map(label).join(" / ") || "empty";
-    el.innerHTML = `<span class="nm">${names}</span><span class="grip"></span>`;
+    el.innerHTML = `<span class="nm">${names}</span>` +
+      ["nw","ne","sw","se"].map(c => `<span class="grip ${c}" data-corner="${c}"></span>`).join("");
+    if(s.h <= 2) el.classList.add("short");
     place(el, s);
     canvas.appendChild(el);
   });
@@ -798,6 +818,13 @@ function fillGaps(){
         if(g.cells > GAP_MAX_FILL || g.cells > budget) continue;
         if(want.col < 1 || want.row < 1 ||
            want.col + want.w - 1 > COLS || want.row + want.h - 1 > ROWS) continue;
+        /* Respect the occupants' ceiling and shape range. Without this, Fill
+           would grow a card past its limits and the server would shrink it
+           back on save — which looks like Fill silently not working. */
+        {
+          const f = fitShape(want.w, want.h, s.modules);
+          if(f[0] !== want.w || f[1] !== want.h) continue;
+        }
         if(L.slots.some(o => o !== s && overlaps(want, o))) continue;
         Object.assign(s, want);
         filled += g.cells; budget -= g.cells; any = true;
@@ -812,7 +839,12 @@ function fillGaps(){
          mark("Nothing next to those gaps can grow into them", "bad"); }
 }
 
-function build(){ buildCanvas(); buildSlots(); buildOpts(); paintGaps(); }
+function build(){
+  buildCanvas(); buildSlots(); buildOpts(); paintGaps();
+  /* Was only ever set from the canvas pointerdown handler, so after Add slot,
+     Undo or Defaults the button's state described the previous selection. */
+  $("#delslot").disabled = !slotOf(sel);
+}
 
 /* ------------------------------------------------------------- slot drag
    Pointer events so one path covers finger and mouse. Only slots move on the
@@ -822,12 +854,14 @@ canvas.addEventListener("pointerdown", e => {
   const el = e.target.closest(".slot");
   if(!el){ sel = null; build(); $("#delslot").disabled = true; return; }
   const s = slotOf(el.dataset.id);
-  const resizing = e.target.classList.contains("grip");
+  const corner = e.target.dataset ? e.target.dataset.corner : null;
+  const resizing = !!corner;
   if(sel !== s.id){ sel = s.id; build(); }
   $("#delslot").disabled = false;
   const node = canvas.querySelector(`.slot[data-id="${s.id}"]`);
   node.setPointerCapture(e.pointerId);
-  drag = {s, resizing, x0: e.clientX, y0: e.clientY, base: {...s}, node, moved: false};
+  drag = {s, resizing, corner, x0: e.clientX, y0: e.clientY,
+          base: {...s}, node, moved: false};
   e.preventDefault();
 });
 canvas.addEventListener("pointermove", e => {
@@ -837,13 +871,34 @@ canvas.addEventListener("pointermove", e => {
   if(dx || dy) drag.moved = true;
   const s = drag.s, b = drag.base;
   if(drag.resizing){
-    const want = [Math.min(COLS - b.col + 1, b.w + dx),
-                  Math.min(ROWS - b.row + 1, b.h + dy)];
-    const [fw, fh] = fitShape(want[0], want[1], s.modules);
+    /* Work in edges, not width and height. Whichever corner is held, the
+       opposite one is the anchor and must not move — so the drag sets the two
+       edges you are holding and leaves the other two where they were. Deriving
+       w/h from those edges is what makes a top-left drag extend the slot
+       upward instead of sliding the whole thing. */
+    const c = drag.corner || "se";
+    const west = c[1] === "w", north = c[0] === "n";
+    const right = b.col + b.w - 1, bottom = b.row + b.h - 1;
+
+    const left = west ? Math.max(1, Math.min(right, b.col + dx)) : b.col;
+    const top  = north ? Math.max(1, Math.min(bottom, b.row + dy)) : b.row;
+    const rgt  = west ? right  : Math.max(left, Math.min(COLS, right + dx));
+    const bot  = north ? bottom : Math.max(top,  Math.min(ROWS, bottom + dy));
+
+    const wantW = rgt - left + 1, wantH = bot - top + 1;
+    const [fw, fh] = fitShape(wantW, wantH, s.modules);
     s.w = fw; s.h = fh;
+    /* Re-anchor after the clamp. Without this, a size the limits refused would
+       leave the slot pinned to the edge you were dragging, so the whole card
+       would creep across the board as you fought the minimum. */
+    s.col = west ? right - fw + 1 : left;
+    s.row = north ? bottom - fh + 1 : top;
+    s.col = Math.max(1, Math.min(COLS - fw + 1, s.col));
+    s.row = Math.max(1, Math.min(ROWS - fh + 1, s.row));
+
     // Say why the handle stopped following the finger, or it reads as a bug.
-    drag.pinned = (fw !== want[0] || fh !== want[1])
-                ? shapeWhy(want[0], want[1], s.modules) : "";
+    drag.pinned = (fw !== wantW || fh !== wantH)
+                ? shapeWhy(wantW, wantH, s.modules) : "";
   }else{
     s.col = Math.max(1, Math.min(COLS - s.w + 1, b.col + dx));
     s.row = Math.max(1, Math.min(ROWS - s.h + 1, b.row + dy));
@@ -1028,19 +1083,74 @@ $("#undo").onclick = () => {
 
 $("#fill").onclick = fillGaps;
 
-$("#addslot").onclick = () => {
-  // Drop it in the first free spot rather than on top of something.
-  outer:
-  for(let r = 1; r <= ROWS - SLOT_MIN[1] + 1; r++)
-    for(let c = 1; c <= COLS - SLOT_MIN[0] + 1; c++){
-      const cand = {col:c, row:r, w:4, h:3};
-      if(cand.col+cand.w-1 > COLS || cand.row+cand.h-1 > ROWS) continue;
-      if(L.slots.some(s => overlaps(cand, s))) continue;
-      const id = "slot" + Date.now().toString(36).slice(-4);
-      L.slots.push({id, mode:"single", dwell:20, modules:[], ...cand});
-      sel = id; touch("Slot added"); build();
-      break outer;
+/* Add slot.
+
+   The old version looked for one free 4x3 box and, finding none, did nothing
+   at all — no slot, no message. On the default layout that is always: the six
+   default slots cover all 216 cells, so the button appeared dead on a fresh
+   board. Three things were wrong and all three are fixed here: it now tries
+   progressively smaller boxes, it takes room from a neighbour when the board
+   is genuinely full, and it says so when it truly cannot. */
+const ADD_SIZES = [[4,3],[4,2],[3,2],[SLOT_MIN[0],SLOT_MIN[1]]];
+
+function newSlot(box){
+  const id = "slot" + Date.now().toString(36).slice(-4) +
+             Math.floor(Math.random()*36).toString(36);
+  L.slots.push({id, mode:"single", dwell:20, modules:[], ...box});
+  return id;
+}
+
+function freeBox(){
+  for(const [w, h] of ADD_SIZES)
+    for(let r = 1; r + h - 1 <= ROWS; r++)
+      for(let c = 1; c + w - 1 <= COLS; c++){
+        const cand = {col:c, row:r, w, h};
+        if(!L.slots.some(s => overlaps(cand, s))) return cand;
+      }
+  return null;
+}
+
+/* Take the room from the largest slot that can spare it — largest because a
+   big card loses proportionally least, and only if the donor still satisfies
+   its own size and shape limits afterwards. */
+function carveBox(){
+  let best = null;
+  for(const s of L.slots){
+    const [mw, mh] = slotMin(s.modules);
+    for(const [w, h] of ADD_SIZES){
+      if(s.h - h >= mh){
+        const f = fitShape(s.w, s.h - h, s.modules);
+        if(f[0] === s.w && f[1] === s.h - h && (!best || s.w*s.h > best.cells))
+          best = {cells:s.w*s.h, s, nw:s.w, nh:s.h - h,
+                  box:{col:s.col, row:s.row + s.h - h, w:Math.min(w, s.w), h}};
+      }
+      if(s.w - w >= mw){
+        const f = fitShape(s.w - w, s.h, s.modules);
+        if(f[0] === s.w - w && f[1] === s.h && (!best || s.w*s.h > best.cells))
+          best = {cells:s.w*s.h, s, nw:s.w - w, nh:s.h,
+                  box:{col:s.col + s.w - w, row:s.row, w, h:Math.min(h, s.h)}};
+      }
     }
+  }
+  return best;
+}
+
+$("#addslot").onclick = () => {
+  snapshot();                        // adding was not undoable before
+  const free = freeBox();
+  if(free){
+    sel = newSlot(free);
+    touch("Slot added — drag a module into it"); build(); return;
+  }
+  const cut = carveBox();
+  if(cut){
+    cut.s.w = cut.nw; cut.s.h = cut.nh;
+    sel = newSlot(cut.box);
+    touch("Slot added — room taken from " +
+          (cut.s.modules.map(label).join(" / ") || cut.s.id)); build(); return;
+  }
+  history.pop(); $("#undo").disabled = !history.length;
+  mark("No room for another slot — shrink or delete one first", "bad");
 };
 $("#delslot").onclick = () => {
   const s = slotOf(sel);
@@ -1063,9 +1173,19 @@ $("#save").onclick = async () => {
     const r = await fetch("/layout/save", {method:"POST",
       headers:{"Content-Type":"application/json"}, body: JSON.stringify(L)});
     if(!r.ok) throw new Error(r.status);
+    const sentIds = L.slots.map(s => s.id);
     L = await r.json();               // server clamps; take back what it kept
     dirty = false; build();
-    mark("Saved — the wall updates within 10 seconds", "ok");
+    /* The server drops slots holding no modules, so an added-but-unfilled slot
+       vanishes on save. That is the right behaviour — an empty slot reserves
+       cells and shows nothing — but it has to be said out loud, or it reads as
+       the save having eaten your work. */
+    const kept = new Set(L.slots.map(s => s.id));
+    const gone = sentIds.filter(id => !kept.has(id)).length;
+    mark(gone
+      ? "Saved — " + gone + " empty slot" + (gone===1?"":"s") +
+        " dropped; a slot needs a module to survive"
+      : "Saved — the wall updates within 10 seconds", gone ? "warn" : "ok");
   }catch(err){ mark("Save failed (" + err.message + ")", "bad"); }
   $("#save").disabled = false;
 };

@@ -33,6 +33,7 @@ from PIL import Image, ImageDraw
 
 from config import (
     PIXOO_IP, LAT, LON, DIRTCHECK_BASE, DATA_DIR,
+    PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN,
     JELLYFIN_URL, JELLYFIN_KEY, JELLYFIN_USER,
     DAY_BRIGHTNESS, NIGHT_BRIGHTNESS, NIGHT_START, NIGHT_END,
     MORNING, RACE_DAYS, RACE_WINDOW,
@@ -1247,10 +1248,11 @@ def snapshot(dirt, bath, wx, path=None):
         "hour": dt.datetime.now().hour,
         "dirt": {k: v for k, v in dirt.items() if k != "art"},
         "weather": {k: v for k, v in wx.items()
-                    if k not in ("nascar", "radar", "services")},
+                    if k not in ("nascar", "radar", "services", "pihole")},
         "nascar": wx.get("nascar") or {},
         "radar": wx.get("radar") or {},
         "services": wx.get("services") or {},
+        "pihole": wx.get("pihole") or {},
         "health": HEALTH,
         "jellyfin": {k: v for k, v in bath.items() if k != "art"},
     }
@@ -1342,6 +1344,25 @@ def fetch():
     if radar:
         wx["radar"] = radar
     wx["services"] = svc or {"offline": True, "reason": "NO ANSWER"}
+
+    # Pi-hole. Blank PIHOLE_HOST drops it entirely — pihole.py returns None on
+    # any failure rather than partial data, so last-known-good is kept instead
+    # of putting an invented "0% blocked" on the wall.
+    if PIHOLE_HOST:
+        import pihole as _pihole
+        ph = None
+        try:
+            ph = _pihole.build(PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN)
+        except Exception:
+            ph = None
+        if ph:
+            wx["pihole"] = ph
+        elif cached and cached.get("pihole"):
+            keep = dict(cached["pihole"])
+            keep["stale"] = True
+            wx["pihole"] = keep
+        else:
+            wx["pihole"] = {"offline": True}
 
     snapshot(dirt, bath, wx)
 

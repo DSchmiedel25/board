@@ -15,12 +15,13 @@ by board.py, for the live mirror and the source health list.
 
 import base64
 import binascii
+import tempfile
 import json
 import os
 import re
 import time
 from urllib.parse import parse_qsl
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
     from config import DATA_DIR
@@ -32,11 +33,16 @@ except ImportError:
 # markup out of here stops one page's bug from taking the other down.
 import layout as _layout
 import wallmedia as _wall
+import wallpage as _wallpage
 
 PORT = 8081
 STATE = os.path.join(DATA_DIR, "screens.json")
 
 PHOTO_DIR = os.path.join(DATA_DIR, "photos")
+# Upload scratch. Deliberately beside the data rather than in /tmp, which on
+# a Pi is often tmpfs — writing a 150MB video there is writing it to RAM,
+# which is the exact thing the streaming path exists to avoid.
+UPLOAD_TMP = os.path.join(DATA_DIR, "tmp")
 # Raised from 12MB now that clips are accepted. A 90-second phone video at
 # 1080p lands around 150MB, so this is a real ceiling rather than a formality;
 # anything larger should be trimmed before it comes over the wire.
@@ -103,6 +109,97 @@ def save(cfg):
 
 
 # ---------------------------------------------------------------- photos
+
+def stream_to_disk(rfile, n, dest_dir):
+    """Read an upload straight to disk in fixed chunks.
+
+    The old path was `body = self.rfile.read(n)` followed by
+    `body.split(boundary)`, which put two full copies of the upload in RAM —
+    peak around 2.5x the file. A 150MB phone video therefore cost most of
+    400MB on a Pi that is also running Jellyfin, and the ceiling on uploads
+    was really "how much before something gets OOM-killed".
+
+    Reading in 256KB chunks makes memory constant regardless of file size, so
+    the only real limit left is how long the transcode takes.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    fd, path = tempfile.mkstemp(dir=dest_dir, prefix="up_", suffix=".part")
+    got = 0
+    try:
+        with os.fdopen(fd, "wb") as f:
+            while got < n:
+                chunk = rfile.read(min(262144, n - got))
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+    except Exception:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
+    return path, got
+
+
+def split_multipart_file(path, boundary):
+    """Walk a multipart body on disk, yielding (filename, part_path).
+
+    Same contract as parse_multipart but never holds a whole part in memory:
+    each one is copied out to its own temp file as the scan passes it.
+    """
+    sep = b"--" + boundary.encode()
+    out = []
+    with open(path, "rb") as f:
+        buf, part, name, writing = b"", None, None, False
+        while True:
+            chunk = f.read(262144)
+            if not chunk:
+                break
+            buf += chunk
+            while True:
+                i = buf.find(sep)
+                if i < 0:
+                    # Keep back enough to catch a boundary split across reads.
+                    keep = len(sep) + 4
+                    if writing and len(buf) > keep:
+                        part.write(buf[:-keep])
+                        buf = buf[-keep:]
+                    break
+                if writing:
+                    data = buf[:i]
+                    if data.endswith(b"\r\n"):
+                        data = data[:-2]
+                    part.write(data)
+                    part.close()
+                    out.append((name, part.name))
+                    writing = False
+                buf = buf[i + len(sep):]
+                j = buf.find(b"\r\n\r\n")
+                if j < 0:
+                    break
+                head = buf[:j].decode("utf-8", "replace")
+                buf = buf[j + 4:]
+                if "filename=" not in head:
+                    continue
+                name = os.path.basename(head.split('filename="', 1)[-1].split('"', 1)[0])
+                if not name:
+                    continue
+                part = tempfile.NamedTemporaryFile(
+                    dir=os.path.dirname(path), prefix="part_", delete=False)
+                writing = True
+        if writing:
+            data = buf
+            k = data.find(sep)
+            if k >= 0:
+                data = data[:k]
+            if data.endswith(b"\r\n"):
+                data = data[:-2]
+            part.write(data)
+            part.close()
+            out.append((name, part.name))
+    return out
+
 
 def parse_multipart(body, boundary):
     """Pull uploaded files out of a multipart body.
@@ -394,7 +491,9 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 <!-- This page controls the Pixoo rotation. The wall board's grid is a
      different thing entirely, so it gets its own page rather than a section
      wedged into this one. -->
-<div class="sub"><a href="/layout" style="color:var(--sodium)">Wall layout editor &rarr;</a></div>
+<div class="sub"><a href="/layout" style="color:var(--sodium)">Wall layout &rarr;</a>
+  &nbsp;&middot;&nbsp;
+  <a href="/gallery" style="color:var(--sodium)">Gallery &amp; framing &rarr;</a></div>
 
 <div class="wrap">
 <div class="col c-mir">
@@ -426,6 +525,9 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 <div class="col c-pho">
 <h2>Photos &amp; clips</h2>
 <div class="card">
+  <div class="sub" style="margin-bottom:8px">Adds to both the Pixoo and the
+    wall. For wall-only items and per-photo framing, use
+    <a href="/gallery" style="color:var(--sodium)">Gallery</a>.</div>
   <form method="post" enctype="multipart/form-data" action="/upload">
     <!-- image/* alone hides video in the phone picker, so clips could be
          processed but never selected. HEIC needs naming explicitly on iOS. -->
@@ -771,6 +873,9 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self.send_error(404)
             return
+        if path == "/gallery":
+            self._send(_wallpage.page().encode())
+            return
         if path == "/layout":
             self._send(_layout.page().encode())
             return
@@ -794,16 +899,42 @@ class Handler(BaseHTTPRequestHandler):
             if n > MAX_UPLOAD or "boundary=" not in ctype:
                 self._send(b'{"error":"too large"}', "application/json", 400)
                 return
-            body = self.rfile.read(n)
             boundary = ctype.split("boundary=", 1)[1].strip().strip('"')
-            done = 0
-            for name, blob in parse_multipart(body, boundary):
-                try:
-                    _wall.add(name, blob)
-                    done += 1
-                except Exception:
-                    pass
+            done, tmp, parts = 0, None, []
+            try:
+                tmp, _got = stream_to_disk(self.rfile, n, UPLOAD_TMP)
+                parts = split_multipart_file(tmp, boundary)
+                for name, ppath in parts:
+                    try:
+                        with open(ppath, "rb") as f:
+                            _wall.add(name, f.read())
+                        done += 1
+                    except Exception:
+                        pass
+            finally:
+                # Temp files are the one thing that will quietly fill a disk,
+                # so they go regardless of how this exits.
+                for _n, p in parts:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+                if tmp:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
             self._send(json.dumps({"added": done}).encode(), "application/json")
+            return
+
+        if path == "/wall/adjust":
+            try:
+                d = json.loads(self.rfile.read(n).decode() or "{}")
+                it = _wall.adjust(d.get("file", ""), d.get("frame") or {})
+                self._send(json.dumps({"item": it}).encode(), "application/json")
+            except Exception as e:
+                self._send(json.dumps({"error": type(e).__name__}).encode(),
+                           "application/json", 400)
             return
 
         if path == "/wall/delete":
@@ -912,4 +1043,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print("control panel on http://0.0.0.0:%d  (state: %s)" % (PORT, STATE))
-    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    # Threaded because uploads are slow. A single-threaded server spent the
+    # whole of an ffmpeg transcode refusing every other request, so the panel
+    # looked crashed for minutes at a time from a phone.
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

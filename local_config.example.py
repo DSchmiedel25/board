@@ -32,3 +32,10 @@ ICS_URL = ""
 # your published status page uses a slug other than "board".
 # KUMA_URL = "http://192.168.1.xxx:3001"
 # KUMA_SLUG = "board"
+
+# National Weather Service asks for a contact address and returns 403 without
+# a plausible one. Only needed if NWS_ALERTS is on.
+NWS_CONTACT = "you@example.com"
+
+# LIFX bulb, if you run lifx_jf.py. Blank LIFX_IP leaves it off.
+LIFX_IP = ""

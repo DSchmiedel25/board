@@ -74,10 +74,45 @@ body{
 /* The bottom strip is always present: what's playing, or service health when
    nothing is. Only the inner card swaps. */
 body.no-media #media{display:none}
-/* Set by the layout resolver, not by hand. */
-#app > [data-off="1"],#app > [data-lose="1"]{display:none!important}
+/* Set by the slot renderer. A module is hidden when its slot is showing a
+   different one, or when it isn't in any slot at all. */
+#app > [data-hide="1"]{display:none!important}
+
+/* ---------------------------------------------------------------- clock
+   Sits over the top-right corner of whatever occupies that area rather than
+   claiming cells of its own. Tabular figures so the colon doesn't jitter. */
+#clock{position:absolute;top:calc(var(--gap) + 8px);right:calc(var(--gap) + 18px);
+       z-index:40;text-align:right;pointer-events:none;
+       text-shadow:0 2px 10px rgba(0,0,0,.75)}
+#clockT{display:block;font-size:60px;font-weight:900;line-height:.9;
+        letter-spacing:.01em;font-variant-numeric:tabular-nums}
+#clockD{display:block;font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+        font-size:15px;letter-spacing:.2em;color:var(--sodium);
+        text-transform:uppercase;margin-top:5px}
+
+/* --------------------------------------------------------------- stale
+   The page can tell when board.py has stopped writing. It could not tell
+   when the Pi itself had gone, because a dead Pi serves nothing and the
+   browser simply keeps the last render on screen forever. Both cases now
+   land here. */
+#stale{position:absolute;left:0;right:0;top:0;z-index:70;
+       background:var(--red);color:#2a0b0a;font-weight:800;font-size:26px;
+       letter-spacing:.06em;text-transform:uppercase;text-align:center;
+       padding:.5em 1em}
+#stale[hidden]{display:none}
+/* Every card is a query container, so its contents can size themselves
+   against the card rather than against the page. The old stylesheet was a
+   list of absolute pixel values tuned for one fixed arrangement; the moment
+   a card could be resized they were all wrong — a 168px temperature clips
+   the instant its card gets shorter, and seven service rows overflow a strip
+   that used to be tall enough.
+
+   cqh is 1% of the container's height, cqi 1% of its inline size. Type in
+   these units tracks the box it lives in. Chromium 105+ supports them; Pi OS
+   Bookworm ships well past that. */
 .card{background:var(--panel);border-radius:var(--r);overflow:hidden;
-      display:flex;flex-direction:column;min-height:0}
+      display:flex;flex-direction:column;min-height:0;
+      container-type:size}
 .card > header{padding:.7em 1.1em;display:flex;align-items:baseline;gap:1em;
                background:var(--sunk)}
 .card > header h2{font-size:1.7em;letter-spacing:.06em;font-weight:900;
@@ -91,11 +126,13 @@ body.no-media #media{display:none}
    "is racing happening" from the doorway. Everything else is subordinate.
    On a green night it moves. */
 #flag{grid-column:1/span 12;grid-row:1/span 3;border-radius:var(--r);position:relative;overflow:hidden;
+      container-type:size;
       display:flex;align-items:center;gap:1.2em;
       padding:1em 1.2em;background:var(--sunk)}
-#flag .word{font-size:96px;font-weight:900;line-height:.92;
+/* clamp so it neither vanishes in a short strip nor overruns a tall one. */
+#flag .word{font-size:clamp(30px,61cqh,112px);font-weight:900;line-height:.92;
             letter-spacing:.02em;text-transform:uppercase;position:relative}
-#flag .sub{font-size:32px;font-weight:700;opacity:.8;
+#flag .sub{font-size:clamp(13px,20cqh,36px);font-weight:700;opacity:.8;
            margin-left:auto;text-align:right;line-height:1.2;color:inherit;
            text-transform:uppercase;letter-spacing:.14em}
 #flag.racing{background:var(--green);color:#08240f}
@@ -124,59 +161,82 @@ body.no-media #media{display:none}
 @keyframes march{to{background-position:48px 0}}
 
 /* ------------------------------------------------------------- tracks */
-#tracks{grid-column:1/span 7;grid-row:4/span 6}
+#racing{grid-column:1/span 7;grid-row:4/span 10}
+#racing .body{gap:0;justify-content:space-between;overflow:hidden}
+/* Six rows in one card, so the two halves need telling apart without a
+   second header eating a row's worth of height. A hairline and a small
+   caption in the gutter does it. */
+.rgroup{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+        font-size:clamp(8px,2.3cqh,14px);
+        letter-spacing:.2em;color:var(--slate);text-transform:uppercase;
+        padding:.25em 0 .35em;display:flex;align-items:center;gap:.8em}
+.rgroup:before{content:"";flex:1;height:1px;background:var(--rail);order:2}
+.rrow{display:flex;align-items:center;gap:1em;padding:.32em 0;min-width:0}
+.rrow .bar{width:5px;align-self:stretch;border-radius:3px;flex:none;
+           background:var(--rail)}
+.rrow.live .bar{background:var(--green)}
+.rrow .who{flex:1;min-width:0}
+/* Six rows plus two captions share this card, so a row is about 1/7th of
+   it. Sized against that rather than a fixed 27px. */
+.rrow .nm{font-size:clamp(14px,4.7cqh,30px);font-weight:700;letter-spacing:.04em;
+          line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rrow .sub{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+           font-size:clamp(9px,2.5cqh,16px);
+           letter-spacing:.13em;color:var(--sodium);text-transform:uppercase;
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rrow .when{text-align:right;flex:none}
+.rrow .w1{font-size:clamp(13px,4.2cqh,27px);font-weight:700;line-height:1.1}
+.rrow .w2{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:13px;
+          letter-spacing:.14em;color:#c9bda9;text-transform:uppercase}
+.rrow.live .w1{color:var(--green);font-weight:800}
+.rrow.dark .nm{color:#a49b8d}
+.rrow .net{background:var(--sunk);color:var(--sodium);font-weight:800;
+           border-radius:.4em;padding:.18em .5em;font-size:17px;flex:none;
+           min-width:3.2em;text-align:center}
 /* Fixed columns rather than `1fr` pushing the times to the far edge — across
    a 1000px panel that opens a canyon between the name and the status. */
-.track{display:grid;grid-template-columns:6px 470px 190px 1fr;gap:0 1.5em;
-       align-items:center;background:var(--sunk);border-radius:12px;
-       padding:.75em 1.2em;flex:1;min-height:0}
-.track .bar{width:6px;height:100%;border-radius:3px;background:var(--rail)}
-/* nowrap: the fallback face is wider than Barlow Condensed, and a name
-   breaking onto two lines wrecks the row rhythm. */
-.track h3{font-size:40px;font-weight:700;line-height:1.05;
-          text-transform:uppercase;letter-spacing:.01em;
-          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.track .town{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-             font-size:.66em;color:var(--slate);letter-spacing:.14em;
-             text-transform:uppercase}
-.track .when{font-size:36px;font-weight:700;
-             text-align:left;line-height:1.1}
-.track .rain{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-             font-size:.66em;color:var(--slate);text-align:left;
-             letter-spacing:.08em}
-/* DirtCheck marks a track by its status, not its name — green means racing.
-   Borrowing that keeps one meaning for one colour across both screens. */
-.track .bar{background:var(--rail)}
-.track h3{color:var(--dust)}
-.track.live .bar{background:var(--green)}
-.track.dark h3{color:var(--slate)}
-.track.dark .bar{opacity:.5}
-.track .status{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-  font-size:.68em;letter-spacing:.16em;color:var(--green);text-align:left}
-.track.dark .status{color:var(--slate)}
-.track.live .when{color:var(--dust)}
-.track.live{background:linear-gradient(90deg,rgba(247,167,44,.10),transparent 55%);
-            animation:idle 3.6s ease-in-out infinite}
-@keyframes idle{0%,100%{box-shadow:inset 0 0 0 0 rgba(247,167,44,0)}
-                50%{box-shadow:inset 0 0 44px -14px rgba(247,167,44,.55)}}
-
-/* ------------------------------------------------------------ weather */
 #weather{grid-column:8/span 5;grid-row:4/span 6;position:relative;background:#1d3a63}
 #weather .body{position:relative;z-index:2}
+/* Alert band. Sits between the header and the forecast, present only when
+   something is actually active — which is most of the time, nothing. Colour
+   tracks NWS severity rather than a single alarm red, because a Frost
+   Advisory and a Tornado Warning arriving in the same widget need to look
+   different from across a room. */
+#wxAlert{position:relative;z-index:3;padding:.5em 1.1em;display:flex;
+         align-items:baseline;gap:.9em;background:var(--sodium);color:#2b2205}
+#wxAlert[hidden]{display:none}
+#wxAlert .ev{font-size:clamp(15px,9.3cqh,34px);font-weight:900;letter-spacing:.01em;
+             text-transform:uppercase;line-height:1.05;white-space:nowrap;
+             overflow:hidden;text-overflow:ellipsis}
+#wxAlert .til{margin-left:auto;font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+              font-size:15px;letter-spacing:.12em;text-transform:uppercase;
+              white-space:nowrap;opacity:.85}
+#wxAlert .more{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:15px;
+               font-weight:800;background:rgba(0,0,0,.22);border-radius:.4em;
+               padding:.1em .45em;flex:none}
+#wxAlert.severe{background:#d9534a;color:#2a0b0a}
+#wxAlert.extreme{background:#a3231a;color:#fff}
+/* Extreme is the one case where movement is warranted: it is rare enough
+   that it will not become wallpaper. */
+#wxAlert.extreme{animation:apulse 2.4s ease-in-out infinite}
+@keyframes apulse{50%{background:#c22a1f}}
+#wxAlert.stale{background:var(--rail);color:var(--dust)}
 #sky{position:absolute;inset:0;z-index:0;width:100%;height:100%}
 #weather header{background:rgba(0,0,0,.28);position:relative;z-index:2}
 .wxmain{display:flex;align-items:center;gap:.4em;flex:1}
-.wxtemp{font-size:168px;font-weight:900;line-height:.8;
+/* Was 168px flat, which is why it clipped the moment the weather card was
+   split in half to make room for the radar. */
+.wxtemp{font-size:clamp(44px,50cqh,190px);font-weight:900;line-height:.8;
         letter-spacing:-.02em}
 .tempwrap{display:flex;align-items:baseline;gap:.08em}
-.wxdeg{font-size:44px;font-weight:700;opacity:.7}
+.wxdeg{font-size:clamp(16px,13cqh,50px);font-weight:700;opacity:.7}
 .wxsub{margin-left:auto;text-align:right;font-size:.86em;line-height:1.7;color:#dbe6f7}
 .days{display:grid;grid-template-columns:repeat(3,1fr);gap:.6em;margin-top:auto;
       border-top:1px solid rgba(255,255,255,.28);padding-top:.7em}
 .day{text-align:center}
 .day .n{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
         font-size:.68em;color:#c3d4ec;letter-spacing:.18em}
-.day .hi{font-size:42px;font-weight:800;line-height:1.15}
+.day .hi{font-size:clamp(16px,12.5cqh,46px);font-weight:800;line-height:1.15}
 .day .lo{font-size:.86em;color:#b3c6e2}
 
 /* -------------------------------------------------------------- radar
@@ -211,92 +271,122 @@ body.no-media #media{display:none}
 #radar .credit{margin-left:auto;opacity:.5;text-decoration:none;
                color:inherit}
 
+/* ------------------------------------------------- progressive detail
+   Scaling type stops things clipping, but a card can get short enough that
+   the right answer is to show less, not smaller. These are the drop rules,
+   in the order the information is least missed. Each card queries its own
+   size, so the same module behaves correctly in a tall slot and a strip.
+
+   The screenshot that prompted this had seven service rows sliced off top
+   and bottom, town names cut mid-word, and a temperature with its lower half
+   missing. All three are this. */
+
+/* Weather: the three-day forecast is the first thing to go, then the
+   secondary readings, leaving the number and the condition. */
+@container (max-height: 260px){
+  #weather .days{display:none}
+}
+@container (max-height: 170px){
+  #weather .wxsub{display:none}
+  #weather > header{padding:.35em 1.1em}
+}
+
+/* Services: rows wrap, and a wrapped row that doesn't fit was being clipped
+   rather than dropped. Cap the count by height and say how many are hidden. */
+@container (max-height: 150px){
+  .svc:nth-child(n+7){display:none}
+}
+@container (max-height: 110px){
+  .svc:nth-child(n+5){display:none}
+  .spct{display:none}
+}
+@container (max-height: 80px){
+  .svc:nth-child(n+4){display:none}
+}
+
+/* Racing: the town under each track name, then the network badge. The names
+   and times survive to the smallest useful size. */
+@container (max-height: 300px){
+  .rrow .sub{display:none}
+  .rrow{padding:.18em 0}
+}
+@container (max-height: 210px){
+  .rrow .net{display:none}
+  .rgroup{font-size:9px}
+}
+
+/* Wire: fewer headlines rather than three squeezed ones. */
+@container (max-height: 120px){
+  .wrow:nth-child(n+3){display:none}
+}
+@container (max-height: 78px){
+  .wrow:nth-child(n+2){display:none}
+  .wmark{display:none}
+}
+
+/* Pi-hole: sparkline, then the top domain, then the raw counts. The
+   percentage is the whole point and never goes. */
+@container (max-width: 700px){
+  .phspark{display:none}
+}
+@container (max-width: 520px){
+  .phtop{display:none}
+}
+@container (max-width: 380px){
+  .phnums{display:none}
+}
+
+/* Radar: the credit line and the timestamp crowd a small map. */
+@container (max-height: 190px){
+  #radar .radarfoot{font-size:11px;padding:.2em .5em}
+  #radar .credit{display:none}
+}
+@container (max-height: 130px){
+  #radar .pin b{font-size:11px}
+}
+
+/* Now playing: side-by-side streams need width; below it they stack, and
+   below that only the first is shown. */
+@container (max-width: 900px){
+  #media .streams{flex-direction:column;gap:.3em}
+}
+
 /* ------------------------------------------------------------- nascar */
-#nascar{grid-column:1/span 7;grid-row:10/span 4}
-#nascar .body{flex-direction:row;gap:var(--gap)}
-.series{flex:1.15;display:flex;flex-direction:column;gap:.5em;min-width:0;
-        justify-content:space-around}
-.srow{display:flex;align-items:center;gap:1.4em}
-.srow .stack{display:flex;flex-direction:column;line-height:1.15;min-width:0}
-.srow .stack.left{flex:0 0 210px}      /* series + track, fixed so the
-                                          times line up down the column */
-.srow .stack.mid{flex:0 0 150px}
-.srow .name{font-size:30px;font-weight:700;letter-spacing:.06em;
-            text-transform:uppercase;color:var(--dust);line-height:1.05}
-.srow .where{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-             font-size:15px;letter-spacing:.13em;color:var(--sodium);
-             text-transform:uppercase;white-space:nowrap;overflow:hidden;
-             text-overflow:ellipsis}
-.srow .date{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-            font-size:15px;letter-spacing:.13em;color:#c9bda9;
-            text-transform:uppercase}
-.srow .time{font-size:28px;font-weight:700}
-.srow .net{background:var(--sunk);color:var(--sodium);font-weight:800;
-           border-radius:.4em;padding:.22em .6em;font-size:19px;
-           text-align:center;min-width:3.4em;flex:none}
-.srow.live .time{color:var(--green);font-weight:800}
-.podium{flex:1;border-left:1px solid var(--rail);padding-left:var(--gap);
-        display:flex;flex-direction:column;gap:.5em;min-width:0}
-
-/* The whole field rather than a top three. The list is duplicated once and
-   translated by exactly half its height, so the loop is seamless — a scroll
-   that snapped back to the top would read as a glitch from across a room. */
-.fieldbox{position:relative;flex:1;min-height:0;overflow:hidden;
-  -webkit-mask-image:linear-gradient(#0000,#000 8%,#000 88%,#0000 100%);
-          mask-image:linear-gradient(#0000,#000 8%,#000 88%,#0000 100%)}
-.fieldroll{position:absolute;top:0;left:0;right:0;
-           animation:roll linear infinite}
-@keyframes roll{to{transform:translateY(-50%)}}
-.frow{display:grid;grid-template-columns:40px 56px 1fr;align-items:baseline;
-      gap:0 .7em;padding:.17em 0}
-.frow .pos{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-           font-size:17px;color:var(--slate);text-align:right}
-.frow .car{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-           font-size:17px;color:var(--sodium)}
-.frow .dvr{font-size:22px;font-weight:700;letter-spacing:.03em;
-           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* Podium colours only where a finish has actually happened */
-.podium.result .frow:nth-child(1) .pos,
-.podium.result .frow:nth-child(1) .dvr{color:#ffd65c}
-.podium.result .frow:nth-child(2) .pos,
-.podium.result .frow:nth-child(2) .dvr{color:#dfe4ea}
-.podium.result .frow:nth-child(3) .pos,
-.podium.result .frow:nth-child(3) .dvr{color:#d99a5c}
-
 /* --------------------------------------------------------------- wire
    Three headlines, fixed slots, swapped on a timer. A scrolling ticker is
    the obvious move and the wrong one: anything in constant motion at the
    edge of vision pulls your eye off whatever you were actually reading.
-   These sit still for 22 seconds and then cross-fade. */
+   Sized in cqh so the rows fill whatever height the slot has rather than
+   floating in it with dead gaps. */
 #wire{grid-column:1/span 12;grid-row:14/span 2}
-#wire > header{display:none}          /* 128px tall; a header eats a third */
+#wire > header{display:none}
 #wire .body{flex-direction:row;align-items:stretch;gap:var(--gap);
-            padding:14px var(--gap)}
-.wmark{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:15px;
+            padding:2cqh var(--gap)}
+.wmark{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+       font-size:clamp(8px,15.3cqh,17px);
        letter-spacing:.18em;text-transform:uppercase;color:var(--slate);
        flex:none;padding-right:var(--gap);border-right:1px solid var(--rail);
        display:flex;flex-direction:column;justify-content:center;gap:.35em}
 .wmark .wage{color:var(--sodium)}
 .wrap{flex:1;min-width:0;display:flex;flex-direction:column;
-      justify-content:space-around}
+      justify-content:space-around;overflow:hidden}
 .wrow{display:flex;align-items:baseline;gap:1em;min-width:0;
       transition:opacity .55s ease}
 .wrow.out{opacity:0}
-.wsrc{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
+.wsrc{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+      font-size:clamp(8px,14.3cqh,16px);
       letter-spacing:.14em;color:var(--sodium);flex:0 0 74px;
       text-align:right;text-transform:uppercase}
-/* One line, always. A headline that wraps to two pushes the row below it
-   off the card, and the layout has no room to absorb that. */
-.wtitle{font-size:29px;font-weight:700;letter-spacing:.02em;flex:1;
-        min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-        line-height:1.12}
-.wtime{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
-       color:var(--slate);flex:none}
+/* One line, always. A headline that wraps to two pushes the row below it off
+   the card, and the layout has no room to absorb that. */
+.wtitle{font-size:clamp(14px,29.7cqh,34px);font-weight:700;letter-spacing:.02em;
+        flex:1;min-width:0;white-space:nowrap;overflow:hidden;
+        text-overflow:ellipsis;line-height:1.12}
+.wtime{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+       font-size:clamp(8px,14.3cqh,16px);color:var(--slate);flex:none}
 .wnone{color:var(--slate);font-size:20px;align-self:center}
-/* Marquee: the rows are laid end to end on one line and translated. The set
-   is duplicated so the loop is seamless — a scroll that snapped back to the
-   start would read as a glitch, the same reason the NASCAR field roll is
-   doubled. */
+/* Marquee: rows laid end to end on one line and translated. The set is
+   duplicated so the loop is seamless. */
 #wire[data-mode="marquee"] .wrap{flex-direction:row;flex-wrap:nowrap;
   overflow:hidden;align-items:center;
   -webkit-mask-image:linear-gradient(90deg,#0000,#000 3%,#000 97%,#0000);
@@ -322,7 +412,9 @@ body.no-media #media{display:none}
                   object-fit:contain;z-index:1}
 #gallery[data-fit="cover"] .gl img,#gallery[data-fit="cover"] .gl video{
   object-fit:cover}
-#gallery[data-fit="cover"] .gl .back{display:none}
+/* The blurred fill only earns its place behind a letterboxed image; behind a
+   cropped one it is invisible and still costs a blur pass every frame. */
+#gallery[data-fit="cover"] .gl .back,.gl[data-fit="cover"] .back{display:none}
 .glnone{position:absolute;inset:0;display:flex;align-items:center;
         justify-content:center;color:var(--slate);font-size:26px;
         text-align:center;padding:2em}
@@ -337,16 +429,53 @@ body.no-media #media{display:none}
        letter-spacing:.18em;text-transform:uppercase;flex:none;
        padding-right:var(--gap);border-right:1px solid var(--rail)}
 .shead.ok{color:var(--green)} .shead.bad{color:var(--red)}
+/* Overflow hidden so a row that does not fit is cut cleanly at the card
+   edge instead of spilling over the one below it. The container rules above
+   are what actually keep the count sane; this is the backstop. */
 .svcs{display:flex;align-items:center;gap:calc(var(--gap)*1.4);flex:1;
-      min-width:0;flex-wrap:wrap}
+      min-width:0;flex-wrap:wrap;overflow:hidden;align-content:center}
 .svc{display:flex;align-items:baseline;gap:9px;min-width:0}
 .sdot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--green)}
 .svc.dn .sdot{background:var(--red)}
-.sname{font-size:24px;font-weight:700;letter-spacing:.03em;white-space:nowrap}
+.sname{font-size:clamp(12px,15.3cqh,26px);font-weight:700;letter-spacing:.03em;
+       white-space:nowrap}
 .svc.dn .sname{color:var(--dust)} .svc.up .sname{color:#bdb1a2}
 .spct{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
       color:var(--slate)}
 .svcnone{color:var(--slate);font-size:20px}
+
+/* -------------------------------------------------------------- pihole
+   Built to sit in the same slot as Services and rotate with it, so it is
+   laid out as a strip: one big number, the counts, and a sparkline. */
+#pihole{grid-column:1/span 12;grid-row:16/span 3;position:relative;overflow:hidden}
+#pihole > header{display:none}
+#pihole .body{flex-direction:row;align-items:center;gap:var(--gap);
+              padding:12px var(--gap)}
+.phpct{font-size:clamp(24px,40.9cqh,72px);font-weight:900;line-height:.85;letter-spacing:-.01em;
+       font-variant-numeric:tabular-nums;flex:none}
+.phpct small{font-size:26px;font-weight:700;opacity:.65;margin-left:.06em}
+.phlab{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:13px;
+       letter-spacing:.18em;text-transform:uppercase;color:var(--slate);
+       flex:none;padding-right:var(--gap);border-right:1px solid var(--rail);
+       align-self:stretch;display:flex;flex-direction:column;
+       justify-content:center;gap:.35em}
+.phnums{display:flex;gap:calc(var(--gap)*1.3);flex:none}
+.phn .v{font-size:clamp(13px,17.2cqh,29px);font-weight:800;
+        font-variant-numeric:tabular-nums;line-height:1.05}
+.phn .k{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:12.5px;
+        letter-spacing:.15em;color:var(--slate);text-transform:uppercase}
+.phtop{flex:1;min-width:0}
+.phtop .d{font-size:20px;font-weight:700;white-space:nowrap;overflow:hidden;
+          text-overflow:ellipsis;color:#cdc2b2}
+/* Sparkline as flexed bars rather than a canvas: 24 divs cost nothing and
+   need no redraw loop on a Pi that already runs two. */
+.phspark{display:flex;align-items:flex-end;gap:2px;height:44px;flex:none;
+         width:190px}
+.phspark i{flex:1;background:var(--rail);border-radius:1px;min-height:2px}
+.phspark i b{display:block;width:100%;background:var(--sodium);border-radius:1px}
+#pihole.off .phpct{color:var(--slate)}
+.phpause{color:var(--red);font-weight:800}
+.phstale{color:var(--sodium)}
 
 #media{grid-column:1/span 12;grid-row:16/span 3;position:relative;overflow:hidden}
 /* No card header on the strip: at 152px tall it would eat half the space,
@@ -432,8 +561,9 @@ body.no-media #media{display:none}
       background:var(--sodium);border-radius:.4em;padding:.2em .55em}
 .card,#flag{animation:rise .6s cubic-bezier(.2,.7,.3,1) both}
 #flag{animation-delay:.02s}
-#tracks{animation-delay:.10s} #weather{animation-delay:.16s}
-#nascar{animation-delay:.22s} #media{animation-delay:.28s}
+#racing{animation-delay:.10s} #weather{animation-delay:.16s}
+#radar{animation-delay:.22s} #wire{animation-delay:.26s}
+#media{animation-delay:.28s} #gallery{animation-delay:.30s}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}}
 
 @media (prefers-reduced-motion:reduce){*{animation:none!important}
@@ -444,6 +574,11 @@ body.no-media #media{display:none}
 <div id="stage">
 <div id="app">
   <canvas id="dust"></canvas>
+  <!-- Fixed furniture, not a module: the clock and the staleness tell sit
+       outside the slot system so no arrangement can remove them. -->
+  <div id="clock"><span id="clockT">--:--</span><span id="clockD"></span></div>
+  <div id="stale" hidden></div>
+
   <div id="flag" class="standby">
     <div class="checks l"></div><div class="checks r"></div>
     <div class="sheen"></div>
@@ -451,14 +586,15 @@ body.no-media #media{display:none}
     <div class="sub" id="flagSub"></div>
   </div>
 
-  <section class="card" id="tracks">
-    <header><h2>Tracks</h2><span class="eyebrow right" id="tracksAge"></span></header>
-    <div class="body" id="trackBody"></div>
+  <section class="card" id="racing">
+    <header><h2>Racing</h2><span class="eyebrow right" id="racingAge"></span></header>
+    <div class="body" id="racingBody"></div>
   </section>
 
   <section class="card" id="weather">
     <canvas id="sky"></canvas>
     <header><h2 id="wxWord">Weather</h2><span class="eyebrow right">Schenectady</span></header>
+    <div id="wxAlert" hidden></div>
     <div class="body" id="wxBody"></div>
   </section>
 
@@ -473,11 +609,6 @@ body.no-media #media{display:none}
            >Weather data by RainViewer &middot; &copy; OpenStreetMap, CARTO</a>
       </div>
     </div>
-  </section>
-
-  <section class="card" id="nascar">
-    <header><h2 id="ncVenue">NASCAR</h2><span class="eyebrow right">Next race per series</span></header>
-    <div class="body" id="ncBody"></div>
   </section>
 
   <section class="card" id="gallery">
@@ -501,6 +632,10 @@ body.no-media #media{display:none}
     </div>
   </section>
 
+  <section class="card" id="pihole">
+    <div class="body" id="phBody"></div>
+  </section>
+
   <section class="card" id="media">
     <div class="backdrop" id="backdrop"></div>
     <div class="scrim"></div>
@@ -511,6 +646,7 @@ body.no-media #media{display:none}
 </div>
 
 <script>
+const ALL_MODULES = ["flag","racing","weather","radar","wire","media","services","pihole","gallery"];
 const $ = s => document.querySelector(s);
 /* Headlines are the only strings on the board that come from outside the
    house. Six third-party feeds put an ampersand or a stray bracket in a
@@ -603,24 +739,69 @@ function renderFlag(dirt){
 const NAMES = {AS:["Albany-Saratoga","Malta NY"], LV:["Lebanon Valley","W Lebanon NY"],
                FON:["Fonda","Fonda NY"]};
 
-function renderTracks(dirt){
-  const body = $("#trackBody"), status = dirt.status || "OK";
-  if (status === "OFFLINE" || status === "UNKNOWN" || !(dirt.rows||[]).length){
-    body.innerHTML = `<div class="down"><div><b>No data</b>Can't reach DirtCheck</div></div>`;
-    $("#tracksAge").textContent = ""; return;
+
+/* --------------------------------------------------------------- racing
+   Three dirt tracks and three NASCAR series in one card. They were separate
+   panels because they come from separate sources, which is a reason to have
+   two mapping modules, not two cards — from eight feet away it is one
+   question: what's running and when. */
+function renderRacing(dirt, nc){
+  const body = $("#racingBody");
+  dirt = dirt || {}; nc = nc || {};
+  const dstatus = dirt.status || "OK";
+  const dOk = !(dstatus === "OFFLINE" || dstatus === "UNKNOWN") && (dirt.rows||[]).length;
+  const nOk = (nc.rows||[]).length;
+
+  if(!dOk && !nOk){
+    body.innerHTML = `<div class="down"><div><b>No data</b>Neither source is answering</div></div>`;
+    $("#racingAge").textContent = ""; return;
   }
-  $("#tracksAge").innerHTML = status === "STALE" ? `<span class="pill">Stale</span>` : "";
-  body.innerHTML = dirt.rows.slice(0,3).map(r=>{
-    const [name,town] = NAMES[r.code] || [r.code,""];
-    const live = r.state && r.state !== "dark";
-    return `<div class="track ${live?"live":"dark"}" data-code="${r.code}">
-      <div class="bar"></div>
-      <div><h3>${name}</h3><div class="town">${town}</div></div>
-      <div><div class="when">${r.when||"—"}</div>
-           <div class="status">${live?"GREEN":"DARK"}</div>
-           <div class="rain">${r.prob==null?"":r.prob+"% RAIN"}</div></div>
-    </div>`;
-  }).join("");
+  $("#racingAge").innerHTML = dstatus === "STALE" ? `<span class="pill">Stale</span>` : "";
+
+  const LONG = {CUP:"Cup Series", XFN:"Xfinity", TRK:"Trucks"};
+  let out = `<div class="rgroup"><span>Dirt</span></div>`;
+
+  if(dOk){
+    out += dirt.rows.slice(0,3).map(r => {
+      const [name, town] = NAMES[r.code] || [r.code, ""];
+      const live = r.state && r.state !== "dark";
+      return `<div class="rrow ${live?"live":"dark"}">
+        <div class="bar"></div>
+        <div class="who"><div class="nm">${esc(name)}</div>
+             <div class="sub">${esc(town)}</div></div>
+        <div class="when"><div class="w1">${esc(r.when||"—")}</div>
+             <div class="w2">${live?"GREEN":"DARK"}${
+               r.prob==null?"":" &middot; "+r.prob+"% RAIN"}</div></div>
+      </div>`;
+    }).join("");
+  }else{
+    out += `<div class="rrow dark"><div class="bar"></div>
+      <div class="who"><div class="sub">DirtCheck not answering</div></div></div>`;
+  }
+
+  out += `<div class="rgroup"><span>NASCAR</span></div>`;
+
+  if(nOk){
+    out += nc.rows.slice(0,3).map(r => {
+      const live = !!r.live;
+      const when = live ? "RACING" : (r.time || r.when || "");
+      const day  = r.date || (r.when || "").split(" ")[0] || "";
+      return `<div class="rrow ${live?"live":"dark"}">
+        <div class="bar"></div>
+        <div class="who"><div class="nm">${esc(LONG[r.label]||r.label)}</div>
+             <div class="sub">${esc(r.venue||"")}</div></div>
+        <div class="when"><div class="w1">${esc(when)}</div>
+             <div class="w2">${esc(day)}</div></div>
+        ${r.net?`<div class="net">${esc(r.net)}</div>`:""}
+      </div>`;
+    }).join("");
+  }else{
+    /* Off-season is not a fault. Saying "no data" here for three months
+       every winter trains you to ignore the card. */
+    out += `<div class="rrow dark"><div class="bar"></div>
+      <div class="who"><div class="sub">Season over &mdash; next schedule in February</div></div></div>`;
+  }
+  body.innerHTML = out;
 }
 
 function renderWeather(wx){
@@ -660,49 +841,6 @@ function fieldRows(fl){
     </div>`).join("");
 }
 
-function renderNascar(nc){
-  const body = $("#ncBody");
-  if (!nc || !(nc.rows||[]).length){
-    body.innerHTML = `<div class="down"><div><b>No data</b>Can't reach ESPN</div></div>`;
-    return;
-  }
-  $("#ncVenue").textContent = nc.live ? "Racing now" : "NASCAR";
-  const LONG = {CUP:"Cup Series", XFN:"Xfinity", TRK:"Trucks"};
-  const series = nc.rows.map(r=>{
-    /* Fall back to the short form if an older snapshot has no date field,
-       so the row still says something useful rather than going blank. */
-    const when = r.live ? "RACING" : (r.time || r.when || "");
-    const day  = r.date || (r.when || "").split(" ")[0] || "";
-    return `
-    <div class="srow ${r.live?"live":""}">
-      <span class="stack left">
-        <span class="name">${LONG[r.label]||r.label}</span>
-        <span class="where">${r.venue||""}</span>
-      </span>
-      <span class="stack mid">
-        <span class="date">${day}</span>
-        <span class="time mono">${when}</span>
-      </span>
-      <span class="net">${r.net||""}</span>
-    </div>`;}).join("");
-  const fl = nc.field;
-  const pod = fl ? `<div class="podium ${fl.kind||"result"}">
-      <div class="eyebrow">${fl.label || "Field"} &middot; ${fl.venue}</div>
-      <div class="fieldbox"><div class="fieldroll" id="fieldRoll">
-        ${fieldRows(fl)}${fieldRows(fl)}
-      </div></div>
-    </div>` : "";
-  body.innerHTML = `<div class="series">${series}</div>${pod}`;
-
-  const roll = $("#fieldRoll");
-  if (roll){
-    // ~26px per second regardless of how many cars took the green
-    requestAnimationFrame(() => {
-      const secs = (roll.scrollHeight / 2) / 26;
-      roll.style.animationDuration = Math.max(12, secs) + "s";
-    });
-  }
-}
 
 function renderServices(svc){
   const box = $("#svcBody");
@@ -826,6 +964,22 @@ function glNext(){
     next.innerHTML = `<div class="back" style="background-image:url('${url}')"></div>
                       <img src="${url}" alt="" decoding="async">`;
   }
+  /* Per-item framing, applied identically to how the editor previews it —
+     that identity is the only reason the preview can be trusted. "auto"
+     defers to the gallery's own Framing setting. */
+  const fr = it.frame || {};
+  const el = next.querySelector("img,video");
+  if(el){
+    const fit = (!fr.fit || fr.fit === "auto") ? (glOpts.fit || "contain") : fr.fit;
+    el.style.objectFit = fit;
+    if(fr.x != null) el.style.objectPosition = fr.x + "% " + fr.y + "%";
+    if(fr.zoom && fr.zoom !== 1){
+      el.style.transform = "scale(" + fr.zoom + ")";
+      el.style.transformOrigin = (fr.x ?? 50) + "% " + (fr.y ?? 50) + "%";
+    }
+    // A per-item fit overrides the slot-wide CSS rule.
+    next.dataset.fit = fit;
+  }
   host.dataset.fit = glOpts.fit || "contain";
   next.classList.add("on"); cur.classList.remove("on");
   glLayer = glLayer ? 0 : 1;
@@ -857,96 +1011,6 @@ function glApplyOpts(o){
   if(JSON.stringify(glOpts) !== before){ glBuildOrder(); glNext(); }
 }
 
-/* --------------------------------------------------------------- layout
-   Position comes from layout.json, written by the editor on 8081. Applied as
-   inline styles on each card, which outrank the stylesheet's fallback spans —
-   so a missing or unreachable layout.json leaves the board in its default
-   arrangement rather than collapsing every card into cell 1,1.
-
-   Polled on its own short interval because editing is interactive: you drag
-   on the couch and want the wall to agree before you've put the phone down. */
-const LAYOUT_POLL = 10000;
-let layoutSig = "", layoutOrder = [];
-
-function applyLayout(doc){
-  const mods = (doc && doc.modules) || null;
-  if(!mods) return;
-  const sig = JSON.stringify(mods) + ":" + doc.gap;
-  if(sig === layoutSig) return;        // don't touch the DOM on an unchanged poll
-  layoutSig = sig;
-
-  const app = document.getElementById("app");
-  if(typeof doc.gap === "number") app.style.setProperty("--gap", doc.gap + "px");
-
-  if(Array.isArray(doc.order)) layoutOrder = doc.order;
-  if(mods.gallery) glApplyOpts(mods.gallery.opts);
-  if(mods.wire)    wireApplyOpts(mods.wire.opts);
-
-  for(const key in mods){
-    const m = mods[key];
-    const el = document.getElementById(key);
-    if(!el) continue;
-    el.style.gridColumn = m.col + " / span " + m.w;
-    el.style.gridRow    = m.row + " / span " + m.h;
-    /* A module switched off is hidden outright rather than left at zero size:
-       a collapsed card still claims its cells and shoves its neighbours. */
-    el.dataset.off = m.on ? "" : "1";
-    el.dataset.pri = m.priority || 0;
-  }
-  resolveSlots();
-}
-
-/* Overlap is legal — it's how the media strip takes the services slot while
-   something is playing. Cards that share any cell are compared by priority,
-   and only the highest one that currently has something to show stays up. */
-function resolveSlots(){
-  /* Tie-break order comes from layout.json, not from where the cards happen
-     to sit in the markup. The editor predicts the winner from the same list,
-     so what it warns about is what actually happens. */
-  const cards = (layoutOrder.length
-      ? layoutOrder.map(k => document.getElementById(k)).filter(Boolean)
-      : [...document.querySelectorAll("#app > .card, #app > #flag")])
-    .filter(el => el.dataset.off !== "1");
-  const box = el => {
-    const cs = getComputedStyle(el);
-    const col = parseInt(cs.gridColumnStart) || 1, row = parseInt(cs.gridRowStart) || 1;
-    const w = parseInt((cs.gridColumnEnd||"").replace(/\D/g,"")) || 1;
-    const h = parseInt((cs.gridRowEnd||"").replace(/\D/g,"")) || 1;
-    return {col, row, w, h};
-  };
-  const hits = (a, b) => a.col < b.col+b.w && b.col < a.col+a.w &&
-                         a.row < b.row+b.h && b.row < a.row+a.h;
-  cards.forEach(el => { el.dataset.lose = ""; });
-  for(let i = 0; i < cards.length; i++){
-    for(let j = i+1; j < cards.length; j++){
-      const A = cards[i], B = cards[j];
-      if(!hits(box(A), box(B))) continue;
-      const pa = (+A.dataset.pri||0) + (hasContent(A) ? 100 : 0);
-      const pb = (+B.dataset.pri||0) + (hasContent(B) ? 100 : 0);
-      (pa >= pb ? B : A).dataset.lose = "1";
-    }
-  }
-}
-
-/* "Has something to show" is per-module. Now playing is the only one that
-   genuinely empties out; the rest always have content, so they default true
-   and win on priority alone. */
-function hasContent(el){
-  if(el.id === "media")   return !document.body.classList.contains("no-media");
-  /* An empty gallery must not win a slot from whatever it was stacked under,
-     or an unused board goes blank instead of falling back. */
-  if(el.id === "gallery") return glItems.length > 0;
-  return true;
-}
-
-async function loadLayout(){
-  try{
-    const r = await fetch("data/layout.json?t="+Date.now(), {cache:"no-store"});
-    if(!r.ok) throw new Error(r.status);
-    applyLayout(await r.json());
-  }catch(e){ /* stylesheet fallback stands */ }
-}
-
 /* ----------------------------------------------------------------- wire
    news.json is written by fetch.py on the cron cycle, separately from
    state.json, so it is fetched separately and a stalled cron shows as a
@@ -954,10 +1018,11 @@ async function loadLayout(){
 let WIRE_ROWS = 3, WIRE_HOLD = 22000;
 const WIRE_POLL = 300000;
 let wireTimer = null;
+let wireItems = [], wireAt = 0, wireStamp = 0;
 
 /* Marquee is a single line scrolling continuously; fade is fixed rows that
-   swap. Both are offered because which one is right depends on how tall the
-   slot is — one row of a 12x1 strip can only marquee. */
+   swap. Both are offered because which is right depends on how tall the slot
+   is — one row of a 12x1 strip can only marquee. */
 function wireApplyOpts(o){
   if(!o) return;
   const rows = Math.max(1, Math.min(5, o.rows || 3));
@@ -971,7 +1036,6 @@ function wireApplyOpts(o){
   if(mode === "fade") wireTimer = setInterval(cycleWire, WIRE_HOLD);
   paintWire();
 }
-let wireItems = [], wireAt = 0, wireStamp = 0;
 
 function since(ts){
   if(!ts) return "";
@@ -1023,6 +1087,259 @@ async function loadWire(){
        hour is the tell that the cron job stopped. */
   }
   paintWire();
+}
+
+/* --------------------------------------------------------------- pihole
+   Reads state.json's own pihole key. pihole.py returns nothing at all rather
+   than partial data on a failure, so there is no half-filled case to render:
+   either real numbers, last-known-good flagged stale, or offline. */
+function nfmt(n){
+  n = +n || 0;
+  if(n >= 1000000) return (n/1000000).toFixed(1).replace(/\.0$/,"") + "M";
+  if(n >= 10000)   return Math.round(n/1000) + "K";
+  if(n >= 1000)    return (n/1000).toFixed(1).replace(/\.0$/,"") + "K";
+  return String(n);
+}
+
+function renderPihole(ph){
+  const body = $("#phBody"), card = $("#pihole");
+  ph = ph || {};
+  if(ph.offline || (!ph.total && !(ph.history||[]).length)){
+    card.className = "card off";
+    body.innerHTML = `<div class="phlab"><span>Pi-hole</span></div>
+      <div class="phtop"><div class="d">Not answering</div></div>`;
+    return;
+  }
+  card.className = "card";
+  const pct = (ph.pct != null) ? ph.pct
+            : (ph.total ? ph.blocked / ph.total * 100 : 0);
+
+  /* The history is [total, blocked] pairs. Drawn as blocked-over-total so
+     the bar height is traffic and the fill is what was stopped — one shape
+     answering "busy?" and "blocking?" at once. */
+  const hist = (ph.history || []).slice(-24);
+  const peak = Math.max(1, ...hist.map(h => h[0] || 0));
+  const spark = hist.length
+    ? `<div class="phspark">${hist.map(([t, b]) =>
+        `<i style="height:${Math.max(2, (t/peak)*100)}%"><b style="height:${
+           t ? Math.min(100,(b/t)*100) : 0}%"></b></i>`).join("")}</div>`
+    : "";
+
+  const state = ph.enabled === false
+    ? `<span class="phpause">Paused</span>`
+    : (ph.stale ? `<span class="phstale">Last known</span>` : `<span>Today</span>`);
+
+  body.innerHTML = `
+    <div class="phlab"><span>Pi-hole</span>${state}</div>
+    <div class="phpct">${pct.toFixed(1)}<small>%</small></div>
+    <div class="phnums">
+      <div class="phn"><div class="v">${nfmt(ph.total)}</div><div class="k">Queries</div></div>
+      <div class="phn"><div class="v">${nfmt(ph.blocked)}</div><div class="k">Blocked</div></div>
+    </div>
+    ${spark}
+    <div class="phtop">${ph.top
+      ? `<div class="k" style="font-family:'DejaVu Sans Mono',monospace;font-size:12.5px;
+           letter-spacing:.15em;color:var(--slate);text-transform:uppercase">Top blocked</div>
+         <div class="d">${esc(ph.top)}</div>` : ""}</div>`;
+}
+
+/* --------------------------------------------------------------- alerts
+   NWS active alerts, fetched server-side by fetch.py. Separate poll from
+   state.json: alerts change on their own schedule and a stalled board
+   process shouldn't take the band down with it.
+
+   Deliberately not a takeover of the flag strip. A Winter Weather Advisory
+   is not more important than knowing whether the track is running, and a
+   band that hijacks the biggest element for routine advisories gets ignored
+   exactly when it matters. */
+const ALERT_POLL = 120000;
+let alertSig = "";
+
+function alertClass(a){
+  const s = (a.severity || "").toLowerCase();
+  if(s === "extreme") return "extreme";
+  if(s === "severe")  return "severe";
+  return "";                            // amber, the default
+}
+
+function untilText(iso){
+  if(!iso) return "";
+  const t = Date.parse(iso);
+  if(isNaN(t)) return "";
+  const mins = Math.round((t - Date.now()) / 60000);
+  if(mins <= 0)   return "ENDING";
+  if(mins < 90)   return "UNTIL " + mins + "M";
+  const hrs = Math.round(mins / 60);
+  if(hrs < 36)    return "UNTIL " + hrs + "H";
+  return "UNTIL " + new Date(t).toLocaleDateString(undefined,
+    {weekday:"short"}).toUpperCase();
+}
+
+function renderAlerts(doc){
+  const el = $("#wxAlert");
+  const list = (doc && doc.alerts) || [];
+  const sig = JSON.stringify(list.map(a => [a.event, a.ends])) + (doc && doc.ok);
+  if(sig === alertSig) return;
+  alertSig = sig;
+
+  if(!list.length){ el.hidden = true; return; }
+  const a = list[0];                    // fetch.py already sorted worst first
+  el.hidden = false;
+  /* A failed fetch keeps the last known alerts rather than clearing the band
+     mid-storm, but they stop being presented as current. */
+  el.className = (doc.ok === false) ? "stale" : alertClass(a);
+  el.innerHTML =
+    `<span class="ev">${esc(a.event)}</span>` +
+    (list.length > 1 ? `<span class="more">+${list.length - 1}</span>` : "") +
+    `<span class="til">${doc.ok === false ? "LAST KNOWN" : esc(untilText(a.ends))}</span>`;
+}
+
+async function loadAlerts(){
+  try{
+    const r = await fetch("data/alerts.json?t="+Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    renderAlerts(await r.json());
+  }catch(e){ /* no file yet: leave the band hidden rather than inventing one */ }
+}
+
+/* ---------------------------------------------------------------- clock
+   Ticks locally rather than from state.json, so it stays right even when
+   nothing is being fetched. */
+function tickClock(){
+  const t = new Date();
+  const hh = t.getHours() % 12 || 12;
+  $("#clockT").textContent = hh + ":" + String(t.getMinutes()).padStart(2,"0");
+  $("#clockD").textContent = t.toLocaleDateString(undefined,
+    {weekday:"short", month:"short", day:"numeric"});
+}
+
+/* ---------------------------------------------------------------- stale
+   Two different failures look identical on a wall: the data stopped, or the
+   machine did. The old code caught only the first — a fetch error meant
+   board.py was down. If the Pi loses power the browser holds the last render
+   indefinitely and the board confidently shows Friday's forecast on Sunday.
+
+   So: track the last successful poll here. If nothing has landed for two
+   minutes, say so on the board itself. Anything that stops the chain —
+   power, network, nginx, the cron job — ends up visible. */
+const STALE_AFTER = 120000;
+let lastGood = Date.now(), staleWasOn = false;
+
+function checkStale(){
+  const age = Date.now() - lastGood;
+  const on = age > STALE_AFTER;
+  if(on === staleWasOn) return;
+  staleWasOn = on;
+  const el = $("#stale");
+  el.hidden = !on;
+  if(on){
+    const mins = Math.round(age/60000);
+    el.textContent = "Board data " + mins + " min old — not updating";
+  }
+}
+
+/* ---------------------------------------------------------------- slots
+   layout.json is a list of rectangles, each holding an ordered list of
+   modules. Slots never overlap — the server refuses it — so exactly one
+   module is visible per slot and there is no priority arithmetic here.
+
+     single / takeover   first module with something to show, and it keeps
+                         the slot until it hasn't. List order is priority.
+     rotate              cycle the ones with something to show, dwell each.
+
+   Emptiness is per module: an off-season card or an idle Jellyfin is skipped
+   rather than rotated in blank. */
+const LAYOUT_POLL = 10000;
+let layoutSig = "", slots = [], slotTimers = {}, slotAt = {};
+
+function hasContent(key){
+  if(key === "media")   return !document.body.classList.contains("no-media");
+  if(key === "gallery") return glItems.length > 0;
+  return true;                     // the rest always have something to say
+}
+
+function liveModules(slot){
+  const live = slot.modules.filter(hasContent);
+  // Everything empty: keep the first so the slot shows its own empty state
+  // rather than leaving a hole in the grid.
+  return live.length ? live : slot.modules.slice(0, 1);
+}
+
+function showInSlot(slot, key){
+  slot.modules.forEach(k => {
+    const el = document.getElementById(k);
+    if(el) el.dataset.hide = (k === key) ? "" : "1";
+  });
+}
+
+function tickSlot(slot){
+  const live = liveModules(slot);
+  const at = (slotAt[slot.id] || 0) % live.length;
+  showInSlot(slot, live[at]);
+  slotAt[slot.id] = (at + 1) % live.length;
+}
+
+function runSlots(){
+  slots.forEach(slot => {
+    clearInterval(slotTimers[slot.id]);
+    if(slot.mode === "rotate" && slot.modules.length > 1){
+      tickSlot(slot);
+      slotTimers[slot.id] = setInterval(() => tickSlot(slot), slot.dwell * 1000);
+    }else{
+      showInSlot(slot, liveModules(slot)[0]);
+    }
+  });
+}
+
+/* Called whenever content appears or disappears — a movie starting has to
+   claim its slot without waiting for the next layout poll. */
+function refreshSlots(){
+  slots.forEach(slot => {
+    if(slot.mode === "rotate" && slot.modules.length > 1) return;   // timer owns it
+    showInSlot(slot, liveModules(slot)[0]);
+  });
+}
+
+function applyLayout(doc){
+  if(!doc || !Array.isArray(doc.slots)) return;
+  const sig = JSON.stringify([doc.slots, doc.opts, doc.gap]);
+  if(sig === layoutSig) return;
+  layoutSig = sig;
+
+  const app = document.getElementById("app");
+  if(typeof doc.gap === "number") app.style.setProperty("--gap", doc.gap + "px");
+
+  // Hide everything first, then let the slots claim their own. A module
+  // dragged to "not shown" has no slot to switch it off, so this is what
+  // turns it off.
+  ALL_MODULES.forEach(k => {
+    const el = document.getElementById(k);
+    if(el) el.dataset.hide = "1";
+  });
+
+  slots = doc.slots;
+  slots.forEach(slot => {
+    slot.modules.forEach(k => {
+      const el = document.getElementById(k);
+      if(!el) return;
+      el.style.gridColumn = slot.col + " / span " + slot.w;
+      el.style.gridRow    = slot.row + " / span " + slot.h;
+    });
+  });
+
+  if(doc.opts){
+    glApplyOpts(doc.opts.gallery);
+    wireApplyOpts(doc.opts.wire);
+  }
+  runSlots();
+}
+
+async function loadLayout(){
+  try{
+    const r = await fetch("data/layout.json?t="+Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    applyLayout(await r.json());
+  }catch(e){ /* stylesheet fallback spans stand */ }
 }
 
 /* ---------------------------------------------------------------- radar
@@ -1250,15 +1567,23 @@ async function load(){
     const r = await fetch("data/state.json?t="+Date.now(), {cache:"no-store"});
     if(!r.ok) throw new Error(r.status);
     const s = await r.json();
+    lastGood = Date.now();
+    /* Not just "did the fetch work" — a stale file served happily by nginx
+       still parses. The snapshot carries its own write time, so compare
+       against that when it's there. */
+    if(s.generated){
+      const wrote = Date.parse(s.generated);
+      if(!isNaN(wrote)) lastGood = Math.min(Date.now(), wrote + 0);
+    }
     dim(s.hour);
     renderFlag(s.dirt||{});
-    renderTracks(s.dirt||{});
+    renderRacing(s.dirt||{}, s.nascar);
     renderWeather(s.weather||{});
-    renderNascar(s.nascar);
     renderRadar(s.radar);
     renderServices(s.services);
+    renderPihole(s.pihole);
     renderMedia(s.jellyfin);
-    resolveSlots();   // now-playing may have just claimed or freed its slot
+    refreshSlots();      // a stream may have just claimed or freed its slot
     const next = (s.weather||{}).sky || "clear";
     if(next!==sky){ sky=next; seedDrops(); }
   }catch(e){
@@ -1270,6 +1595,9 @@ async function load(){
   }
 }
 seedDrops(); paintSky(); buildBase(); load(); setInterval(load, POLL);
+tickClock(); setInterval(tickClock, 10000);
+loadAlerts(); setInterval(loadAlerts, ALERT_POLL);
+setInterval(checkStale, 15000);
 loadLayout(); setInterval(loadLayout, LAYOUT_POLL);
 loadWire(); setInterval(loadWire, WIRE_POLL);
 wireTimer = setInterval(cycleWire, WIRE_HOLD);

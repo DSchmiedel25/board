@@ -118,17 +118,51 @@ launchctl bootout gui/$(id -u)/com.board.pixoo        # stop
 
 | File | What it does |
 | --- | --- |
-| `config.py` | Everything you edit. Nothing else should need changing. |
+| `config.py` | Shared settings, tracked by git |
+| `local_config.py` | Machine-specific values, never committed |
 | `board.py` | Draws and pushes the Pixoo-64 screens |
-| `dirtcall.py` | Reads DirtCheck's events + status into flag state and track rows |
-| `bathroom.py` | Reads BathroomReport's GA4 + Clarity analytics |
-| `pihole.py` | Reads Pi-hole v6/v5 stats into the shape the screen wants |
+| `index.html` | The wall dashboard |
+| `control.py` | Web panel on :8081 — Pixoo rotation, uploads, and the two editors |
+| `layout.py` | Wall slots, and the drag-and-drop layout editor |
+| `wallmedia.py` | Wall-resolution photo/GIF/video processing |
+| `wallpage.py` | Gallery page — uploads and per-image framing |
+| `dirtcheck.py` | Reads DirtCheck's events + status into flag state and track rows |
+| `nascar.py` | Next race per series |
+| `jellyfin.py` | Now-playing state and artwork |
+| `kuma.py` | Uptime Kuma service health |
+| `pihole.py` | Pi-hole v6/v5 stats |
+| `lifx_jf.py` | Drives a LIFX bulb from Jellyfin now-playing art |
 | `nextevent.py` | Expands recurring events from a published .ics (Pi) |
 | `nextevent-mac.py` | Reads Calendar.app directly via EventKit (Mac) |
-|  `fetch.py` | Pulls RSS feeds past CORS |
-| `index.html` | The wall dashboard |
+| `fetch.py` | Pulls RSS feeds and NWS alerts past CORS |
+| `pixoo_client.py` | One HTTP POST to the device |
 | `setup.sh` | Installs all of the above on a Pi |
-| `setup-mac.sh` | Same, for a Mac mini (launchd instead of systemd) |
+| `setup-kiosk.sh` | Chromium kiosk + screen schedule on the wall Pi |
+| `kiosk-run.sh` / `screen.sh` | Kiosk launcher and blanking helper |
+| `setup-mac.sh` | Same as setup.sh, for a Mac mini (launchd instead of systemd) |
+
+## The wall board
+
+Modules are arranged into **slots** — rectangles on a 12x18 grid holding an
+ordered list of modules. Slots cannot overlap. Each has a mode:
+
+- **One** — a single module
+- **Takeover** — first module with something to show; list order is priority
+- **Rotate** — cycle those with something to show, N seconds each
+
+Edit at `:8081/layout`. Gallery uploads and per-photo framing at `:8081/gallery`.
+
+| Module | Shows |
+| --- | --- |
+| Flag strip | Racing tonight, rained out, or standby |
+| Racing | 3 dirt tracks and 3 NASCAR series |
+| Weather | Now, three-day forecast, and NWS alerts |
+| Radar | Rain moving in, with the three tracks pinned |
+| Wire | Headlines from `NEWS_FEEDS` |
+| Now playing | Jellyfin, only while something streams |
+| Services | Uptime Kuma health |
+| Pi-hole | Share of DNS blocked today, and traffic |
+| Gallery | Photos, GIFs and clips you've uploaded |
 
 ## The screens
 
@@ -167,10 +201,10 @@ so it renders correctly before anything is connected. Two mappings in
 Both are wired to the real files and need no mapping changes:
 
 **DirtCheck** — `events.json` (season schedule + track metadata) and
-`status.json` (per-event flag, rain probability). Handled in `dirtcall.py`.
+`status.json` (per-event flag, rain probability). Handled in `dirtcheck.py`.
 
 **BathroomReport** — `analytics-data.json` at the site root, GA4 daily figures
-plus the Clarity quality metrics. Handled in `bathroom.py`.
+plus the Clarity quality metrics. Handled inside `board.py`.
 
 If either moves, change `config.py`. If the shape changes, change the mapping
 module, not the drawing code.

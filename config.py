@@ -38,8 +38,18 @@ NEWS_FEEDS = [
     ("WIRE",  "https://www.dailywire.com/feeds/rss.xml"),
     ("DC",    "https://dailycaller.com/feed/"),
     ("BBART", "https://www.breitbart.com/feed/"),
-    ("TH",    "https://townhall.com/news/feed"),
+    ("TH",    "https://townhall.com/rss"),
 ]
+
+# National Weather Service active alerts for this point. No key, no cost.
+# Silent most of the time, and the most useful thing on the board when it
+# isn't. Set to False to drop the band entirely.
+NWS_ALERTS = True
+
+# The NWS asks for a contact address in the User-Agent and returns 403
+# without a plausible one. Yours is better than a generic string if you ever
+# need them to tell you why you're being throttled.
+NWS_CONTACT = "board@localhost"
 
 # Headlines kept in news.json. The card shows far fewer; the surplus is there
 # so the rotation has somewhere to go and a single dead feed doesn't empty it.
@@ -88,6 +98,15 @@ PIXOO_IP = ""
 JELLYFIN_URL = "http://localhost:8096"
 JELLYFIN_KEY = ""
 ICS_URL = ""
+
+# LIFX bulb driven by Jellyfin now-playing art (lifx_jf.py). Declared here
+# with harmless defaults because a fresh clone otherwise fails on import:
+# these lived only in local_config.py, so the service crashed on any machine
+# that hadn't been set up by hand.
+LIFX_IP = ""                          # blank disables the bulb entirely
+LIFX_USER = None                      # only mirror this Jellyfin user
+LIFX_DEVICE = None                    # bulb label, if more than one answers
+LIFX_AUTO_POWER = True                # turn the bulb on when playback starts
 
 # Pi-hole. Leave PIHOLE_HOST empty to drop the screen from the rotation.
 # On v6 with no password set, no credential is needed — the API is open.

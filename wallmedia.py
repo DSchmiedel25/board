@@ -156,6 +156,47 @@ def probe_duration(path):
         return 0.0
 
 
+# Per-item framing. Stored as intent — where to look and how close — rather
+# than a cropped file. The gallery slot's shape is a setting the user can
+# change, so a crop baked in at upload is wrong the moment 3:2 becomes 2:3.
+# These three numbers re-render correctly at any ratio, and the original file
+# is never touched.
+FRAME_DEFAULT = {"fit": "auto", "zoom": 1.0, "x": 50, "y": 50}
+
+
+def clean_frame(got):
+    out = dict(FRAME_DEFAULT)
+    if not isinstance(got, dict):
+        return out
+    fit = got.get("fit")
+    if fit in ("auto", "contain", "cover"):
+        out["fit"] = fit
+    try:
+        out["zoom"] = round(max(1.0, min(4.0, float(got.get("zoom", 1.0)))), 3)
+    except (TypeError, ValueError):
+        pass
+    for axis in ("x", "y"):
+        try:
+            out[axis] = round(max(0.0, min(100.0, float(got.get(axis, 50)))), 1)
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def adjust(fname, frame):
+    """Set one item's framing. Returns the updated entry, or None."""
+    fname = os.path.basename(fname)
+    lst = items()
+    hit = None
+    for it in lst:
+        if it.get("file") == fname:
+            it["frame"] = clean_frame(frame)
+            hit = it
+    if hit:
+        write_index(lst)
+    return hit
+
+
 def add(name, blob):
     """Process one upload into the wall gallery. Returns its index entry."""
     stem = stem_of(name)
@@ -167,6 +208,7 @@ def add(name, blob):
         item["from"] = "gif"
     else:
         item = save_video(blob, stem, ".mp4")
+    item["frame"] = dict(FRAME_DEFAULT)
     item["ts"] = int(time.time())
     item["name"] = name[:60]
     write_index(items() + [item])
@@ -180,8 +222,14 @@ def items():
     except Exception:
         got = []
     # Drop entries whose file has been deleted from disk by hand.
-    return [i for i in got
-            if os.path.exists(os.path.join(WALL_DIR, i.get("file", "")))]
+    out = []
+    for i in got:
+        if not os.path.exists(os.path.join(WALL_DIR, i.get("file", ""))):
+            continue
+        # Items uploaded before framing existed have no frame key.
+        i["frame"] = clean_frame(i.get("frame"))
+        out.append(i)
+    return out
 
 
 def write_index(lst):

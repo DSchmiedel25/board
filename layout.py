@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 """
-layout.py — the wall board's grid, and the editor that moves it around.
+layout.py — the wall board's slots, and the editor that arranges them.
 
-The board used to be a fixed set of CSS grid-template-areas baked into
-index.html. Named areas can't express an arbitrary rectangle, so anything
-drag-and-drop needs a uniform cell matrix instead: 12 columns x 18 rows over
-the 1920x1080 surface, which is 160 x 60 px per cell. Twelve columns because
-the old 1.32fr / 1fr split lands almost exactly on 7/5, and eighteen rows
-because the short strips — the wire at ~128px and the media bar at ~152px —
-need finer vertical steps than a 12-row grid can give them.
+This replaces a free-positioning grid editor. That version let any module sit
+anywhere, which meant two could occupy the same cells, which meant one of them
+silently vanished. Everything built afterwards — priority numbers, push-aside,
+collision detection, warning banners, a shipped tie-break order — existed only
+to manage a hazard the model itself created. On a phone the cells were 11px
+tall and the resize grip was bigger than the card it resized.
 
-control.py serves the editor and writes layout.json. index.html polls that
-file and sets grid-column / grid-row on each card. Nothing about the grid
-lives in the stylesheet any more.
+The model here is a slot: a rectangle on the grid holding an ordered list of
+modules. Slots cannot overlap — the server rejects it — so only one thing is
+ever visible in a given place and the whole class of bugs disappears.
 
-Overlap is allowed on purpose. Two modules sharing cells is how the media
-strip already hands its slot to services when nothing is playing — highest
-priority that is currently eligible wins, the rest hide.
+Two modes:
+
+  single / takeover   the first module in the list with something to show
+                      wins and keeps the slot until it has nothing. List
+                      order is the priority; there is no priority field.
+                      Now-playing over Gallery is this.
+
+  rotate              cycle through the modules that have something to show,
+                      dwell seconds each. Services and Pi-hole is this.
+
+A module with nothing to show is skipped in both modes, so an off-season card
+never rotates in blank.
 """
 
 import json
@@ -31,38 +39,36 @@ except ImportError:
 COLS, ROWS = 12, 18
 LAYOUT = os.path.join(DATA_DIR, "layout.json")
 
-# key, label, description, minimum width/height in cells. The minimums are
-# not fussiness: below them the type inside the card wraps and pushes its own
-# content out of the box, which looks like a bug rather than a small card.
-MODULES = [
-    ("flag",     "Flag strip",  "Racing tonight, rained out, or standby",  4, 2),
-    ("tracks",   "Tracks",      "All three tracks, next date and rain %",  4, 3),
-    ("weather",  "Weather",     "Now, three-day forecast and conditions",  3, 4),
-    # Below 3x3 the tile window is smaller than one 256px tile scaled up, so
-    # the map is a blurry crop with the pins stacked on top of each other.
-    ("radar",    "Radar",       "Rain moving in, with the three tracks",    3, 3),
-    ("nascar",   "NASCAR",      "Next race per series, plus the field",    5, 3),
-    ("wire",     "Wire",        "Headlines from your RSS feeds",           4, 1),
-    ("media",    "Now playing", "Jellyfin — only while something streams", 4, 2),
-    ("services", "Services",    "Uptime Kuma health",                      3, 1),
-    ("gallery",  "Gallery",     "Photos, GIFs and clips you've uploaded",  3, 2),
-]
-
-# Per-module settings, declared rather than hand-coded, so the editor can
-# render controls for any module without knowing what it is and sanitize()
-# can clamp them from the same table. Adding a knob is one line here.
+# key, label, description, min width, min height (in cells).
 #
-#   (key, label, kind, spec, default)
-#   kind "range" -> spec is (min, max)
-#   kind "chips" -> spec is [(value, label), ...]
-#   kind "multi" -> spec is [(value, label), ...], value is a list
+# The minimums are floors on usefulness, not on rendering: the cards now
+# scale their type and drop detail as they shrink, so a small one still looks
+# right — it just stops answering the question it exists for. Racing needs
+# height for six rows before they collapse into an unreadable stack; the
+# radar below 3x3 is a blurry crop with all three pins on top of each other.
+MODULES = [
+    ("flag",     "Flag strip",  "Racing tonight, rained out, or standby", 4, 2),
+    ("racing",   "Racing",      "3 dirt tracks and 3 NASCAR series",      4, 5),
+    ("weather",  "Weather",     "Now, three-day forecast and conditions", 3, 3),
+    ("radar",    "Radar",       "Rain moving in, with the three tracks",  3, 3),
+    ("wire",     "Wire",        "Headlines from your RSS feeds",          4, 1),
+    ("media",    "Now playing", "Jellyfin — only while something streams",4, 2),
+    ("services", "Services",    "Uptime Kuma health",                     3, 1),
+    ("pihole",   "Pi-hole",     "Share of DNS blocked today, and traffic",4, 1),
+    ("gallery",  "Gallery",     "Photos, GIFs and clips you've uploaded", 3, 2),
+]
+MINS = {m[0]: (m[3], m[4]) for m in MODULES}
+KEYS = [m[0] for m in MODULES]
+LABELS = {m[0]: m[1] for m in MODULES}
+
+MODES = ["single", "takeover", "rotate"]
+DWELL_MIN, DWELL_MAX = 5, 300
+
+# Per-module settings, declared so the editor renders controls for anything
+# without knowing what it is, and so clean_opts can clamp from one table.
+#   (key, label, kind, spec, default)   kind: range | chips | multi
 OPTS = {
     "gallery": [
-        ("ratio", "Shape", "chips",
-         [("16:9", "16:9"), ("3:2", "3:2"), ("4:3", "4:3"), ("1:1", "1:1"),
-          ("3:4", "3:4"), ("2:3", "2:3"), ("9:16", "9:16")], "3:2"),
-        ("size", "Size", "chips",
-         [("S", "Small"), ("M", "Medium"), ("L", "Large")], "M"),
         ("dwell", "Seconds per item", "range", (3, 120), 8),
         ("order", "Order", "chips",
          [("shuffle", "Shuffle"), ("sequence", "In order")], "shuffle"),
@@ -77,137 +83,155 @@ OPTS = {
         ("mode", "Motion", "chips",
          [("fade", "Cross-fade"), ("marquee", "Marquee")], "fade"),
     ],
-    "tracks": [
-        ("dwell", "Seconds per track page", "range", (6, 120), 20),
-    ],
-}
-# Gallery footprint, locked to standard photo shapes rather than dragged.
-# Computed against the real cell geometry — 12 columns and 18 rows over
-# 1920x1080 with 20px padding and gaps gives 138.33 x 38.89 px cells, so the
-# cell grid is nowhere near square and the obvious spans are all wrong. Each
-# entry is the (w, h) whose *pixel* span lands closest to the named ratio at
-# roughly the named share of the screen. Worst case here is 3.8% off; most
-# are under 2%, which is invisible next to a photo's own crop.
-GALLERY_FIT = {
-    "16:9": {"S": (5, 8),  "M": (7, 11), "L": (9, 14)},
-    "3:2":  {"S": (5, 9),  "M": (6, 11), "L": (8, 15)},
-    "4:3":  {"S": (4, 8),  "M": (6, 12), "L": (8, 16)},
-    "1:1":  {"S": (3, 8),  "M": (5, 13), "L": (6, 16)},
-    "3:4":  {"S": (3, 11), "M": (4, 14), "L": (5, 18)},
-    "2:3":  {"S": (3, 12), "M": (4, 16), "L": (4, 16)},
-    # 9:16 is so tall that one span covers every size — 3x14 is already
-    # full height. Listed three times so the size control still answers.
-    "9:16": {"S": (3, 14), "M": (3, 14), "L": (3, 14)},
 }
 
-KEYS = [m[0] for m in MODULES]
-MINS = {m[0]: (m[3], m[4]) for m in MODULES}
-LABELS = {m[0]: m[1] for m in MODULES}
+# Floor for a slot holding nothing yet.
+SLOT_MIN = (3, 1)
 
-# The layout as it shipped, translated onto the 12x18 grid. Rows: flag 3,
-# the tracks/nascar/weather block 10, wire 2, media 3.
+
+def slot_min(modules):
+    """A slot must fit its largest occupant on each axis.
+
+    Taking the max rather than the first module's minimum matters for shared
+    slots: Now-playing over Services is 4x2 and 3x1, and sizing that slot to
+    the Services minimum would leave the poster with nowhere to go the moment
+    something started playing.
+    """
+    w, h = SLOT_MIN
+    for k in modules or []:
+        mw, mh = MINS.get(k, SLOT_MIN)
+        w, h = max(w, mw), max(h, mh)
+    return w, h
+
 DEFAULT = {
-    "modules": {
-        "flag":     {"col": 1, "row": 1,  "w": 12, "h": 3,  "on": True,  "priority": 1},
-        "tracks":   {"col": 1, "row": 4,  "w": 7,  "h": 6,  "on": True,  "priority": 1},
-        "nascar":   {"col": 1, "row": 10, "w": 7,  "h": 4,  "on": True,  "priority": 1},
-        # The right column split in two: conditions on top, radar beneath.
-        "weather":  {"col": 8, "row": 4,  "w": 5,  "h": 6,  "on": True,  "priority": 1},
-        "radar":    {"col": 8, "row": 10, "w": 5,  "h": 4,  "on": True,  "priority": 1},
-        "wire":     {"col": 1, "row": 14, "w": 12, "h": 2,  "on": True,  "priority": 1},
-        "media":    {"col": 1, "row": 16, "w": 12, "h": 3,  "on": True,  "priority": 10},
-        "services": {"col": 1, "row": 16, "w": 12, "h": 3,  "on": True,  "priority": 0},
-        # Sits under the whole racing block. In season nothing sees it; from
-        # November to February it is what's on the wall.
-        # 3:2 medium — the shape a phone camera actually produces. It no
-        # longer spans the whole board: a full-bleed panel at priority 0 was
-        # invisible on the wall but drew over every other card in the editor,
-        # which is why nothing else could be selected.
-        "gallery":  {"col": 1, "row": 4,  "w": 6,  "h": 11, "on": True,  "priority": 0},
-    },
+    "slots": [
+        {"id": "banner", "col": 1, "row": 1, "w": 12, "h": 3,
+         "mode": "single", "dwell": 20, "modules": ["flag"]},
+        # Racing in season, gallery the rest of the year. This is the winter
+        # fallback: from November to February both racing sources are dark at
+        # once, and without something underneath, half the board goes blank.
+        {"id": "main", "col": 1, "row": 4, "w": 7, "h": 10,
+         "mode": "takeover", "dwell": 20, "modules": ["racing", "gallery"]},
+        {"id": "sky", "col": 8, "row": 4, "w": 5, "h": 6,
+         "mode": "single", "dwell": 20, "modules": ["weather"]},
+        {"id": "map", "col": 8, "row": 10, "w": 5, "h": 4,
+         "mode": "single", "dwell": 20, "modules": ["radar"]},
+        {"id": "news", "col": 1, "row": 14, "w": 12, "h": 2,
+         "mode": "single", "dwell": 20, "modules": ["wire"]},
+        {"id": "strip", "col": 1, "row": 16, "w": 12, "h": 3,
+         "mode": "takeover", "dwell": 18,
+         "modules": ["media", "services", "pihole"]},
+    ],
+    "off": [],
+    "opts": {},
     "gap": 20,
     "ts": 0,
 }
 
 
 def clamp(v, lo, hi):
-    return max(lo, min(hi, int(v)))
+    try:
+        return max(lo, min(hi, int(v)))
+    except (TypeError, ValueError):
+        return lo
 
 
-def sanitize(doc):
-    """Force a posted layout into something the renderer can't choke on.
-
-    The editor already constrains dragging, but this is a public POST on the
-    LAN and a bad layout.json is a blank wall that needs SSH to fix. Anything
-    unrecognised is dropped and anything out of range is clamped rather than
-    rejected — a slightly-wrong board beats no board.
-    """
-    out = {"modules": {}, "gap": clamp(doc.get("gap", 20), 0, 60),
-           # Tie-break order, shipped rather than inferred. The board used to
-           # fall back to DOM order and the editor to this table's order, and
-           # the two disagreed — so the editor could promise weather would
-           # survive a collision that actually buried it.
-           "order": list(KEYS),
-           "push": bool(doc.get("push", True)),
-           "ts": int(time.time())}
-    src = doc.get("modules") or {}
-    for key in KEYS:
-        d = src.get(key) or {}
-        base = DEFAULT["modules"][key]
-        mw, mh = MINS[key]
-        w = clamp(d.get("w", base["w"]), mw, COLS)
-        h = clamp(d.get("h", base["h"]), mh, ROWS)
-        col = clamp(d.get("col", base["col"]), 1, COLS - w + 1)
-        row = clamp(d.get("row", base["row"]), 1, ROWS - h + 1)
-        out["modules"][key] = {
-            "col": col, "row": row, "w": w, "h": h,
-            "on": bool(d.get("on", base["on"])),
-            "priority": clamp(d.get("priority", base.get("priority", 0)), 0, 99),
-        }
-        if key in OPTS:
-            out["modules"][key]["opts"] = clean_opts(key, d.get("opts") or {})
-
-    # The gallery's own size is not a thing you drag. Photos have shapes and
-    # a slot that isn't one of them either bars the image or crops it, so the
-    # footprint is derived from the chosen ratio and clamped back onto the
-    # grid. Position stays free.
-    g = out["modules"]["gallery"]
-    gw, gh = GALLERY_FIT[g["opts"]["ratio"]][g["opts"]["size"]]
-    g["w"], g["h"] = gw, gh
-    g["col"] = clamp(g["col"], 1, COLS - gw + 1)
-    g["row"] = clamp(g["row"], 1, ROWS - gh + 1)
-    return out
+def boxes_overlap(a, b):
+    return (a["col"] < b["col"] + b["w"] and b["col"] < a["col"] + a["w"] and
+            a["row"] < b["row"] + b["h"] and b["row"] < a["row"] + a["h"])
 
 
 def clean_opts(key, got):
-    """Clamp settings against the declared spec. Same reasoning as the grid
-    itself: an out-of-range dwell is a module that never advances, and fixing
-    that needs SSH. Clamp, don't reject."""
     out = {}
-    for name, _label, kind, spec, default in OPTS[key]:
+    for name, _label, kind, spec, default in OPTS.get(key, []):
         v = got.get(name, default)
         if kind == "range":
-            lo, hi = spec
-            try:
-                out[name] = clamp(v, lo, hi)
-            except (TypeError, ValueError):
-                out[name] = default
+            out[name] = clamp(v, spec[0], spec[1])
         elif kind == "chips":
             allowed = [a for a, _b in spec]
             out[name] = v if v in allowed else default
         elif kind == "multi":
             allowed = [a for a, _b in spec]
             picked = [x for x in (v if isinstance(v, list) else []) if x in allowed]
-            # An empty set means a module with nothing to show, which reads as
-            # broken. Fall back to everything rather than to nothing.
+            # Empty means a module with nothing to show, which reads as broken.
             out[name] = picked or list(default)
     return out
+
+
+def sanitize(doc):
+    """Force a posted layout into something the renderer cannot choke on.
+
+    Clamps rather than rejects wherever it can: a slightly-wrong board beats
+    a blank wall that needs SSH to fix. The one thing it will not do is let
+    slots overlap — that is the hazard this whole model exists to remove, so
+    an overlapping slot is dropped and its modules fall to the off tray.
+    """
+    slots, used, seen_mod, ids = [], [], set(), set()
+
+    for i, s in enumerate(doc.get("slots") or []):
+        if not isinstance(s, dict):
+            continue
+
+        mods = []
+        for k in (s.get("modules") or []):
+            # A module can only live in one slot; a duplicate would be two
+            # cards rendering the same DOM node in two places.
+            if k in KEYS and k not in seen_mod:
+                mods.append(k)
+
+        # Size is clamped against the slot's own occupants, so a module never
+        # ends up in a box smaller than it can say anything in. Computed
+        # before the box because the answer depends on what is inside.
+        mw, mh = slot_min(mods)
+        w = clamp(s.get("w", mw), mw, COLS)
+        h = clamp(s.get("h", mh), mh, ROWS)
+        col = clamp(s.get("col", 1), 1, COLS - w + 1)
+        row = clamp(s.get("row", 1), 1, ROWS - h + 1)
+        box = {"col": col, "row": row, "w": w, "h": h}
+        if any(boxes_overlap(box, u) for u in used):
+            continue                      # its modules end up off, below
+
+        # Only now are these modules really placed: an overlapping slot is
+        # dropped above, and marking them earlier would strand them nowhere.
+        seen_mod.update(mods)
+        used.append(box)
+
+        sid = str(s.get("id") or "slot%d" % (i + 1))[:24]
+        while sid in ids:
+            sid += "_"
+        ids.add(sid)
+
+        mode = s.get("mode") if s.get("mode") in MODES else "single"
+        if len(mods) > 1 and mode == "single":
+            mode = "takeover"             # single with a list is meaningless
+        slots.append({
+            "id": sid, "mode": mode,
+            "dwell": clamp(s.get("dwell", 20), DWELL_MIN, DWELL_MAX),
+            "modules": mods, **box,
+        })
+
+    # Empty slots are pointless but harmless; drop them so the board isn't
+    # reserving cells for nothing.
+    slots = [s for s in slots if s["modules"]]
+
+    off = [k for k in KEYS if k not in seen_mod]
+    opts = {k: clean_opts(k, (doc.get("opts") or {}).get(k) or {})
+            for k in OPTS}
+    return {"slots": slots, "off": off, "opts": opts,
+            "gap": clamp(doc.get("gap", 20), 0, 60), "ts": int(time.time())}
 
 
 def load():
     try:
         with open(LAYOUT) as f:
-            return sanitize(json.load(f))
+            doc = json.load(f)
+        # A file from the old free-grid schema has "modules" and no "slots".
+        # Rather than guess at a translation, fall back to defaults: the
+        # arrangement is one screen of dragging to redo, and a half-migrated
+        # board is far more confusing than a fresh one.
+        if "slots" not in doc:
+            return sanitize(DEFAULT)
+        return sanitize(doc)
     except Exception:
         return sanitize(DEFAULT)
 
@@ -218,13 +242,11 @@ def save(doc):
     tmp = LAYOUT + ".tmp"
     with open(tmp, "w") as f:
         json.dump(clean, f, separators=(",", ":"))
-    os.replace(tmp, LAYOUT)      # atomic: the board never reads a half file
+    os.replace(tmp, LAYOUT)          # atomic: the board never reads a half file
     return clean
 
 
-# --------------------------------------------------------------- editor page
-
-PAGE = """<!doctype html>
+PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Board layout</title>
@@ -233,54 +255,43 @@ PAGE = """<!doctype html>
       --dust:#f0ebe0;--slate:#8a8378;--sodium:#e8b93f;--green:#5fbf5a;--red:#d9534a}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{background:var(--bg);color:var(--dust);font:16px/1.4 system-ui,-apple-system,sans-serif;
-     padding:14px;padding-bottom:120px}
+     padding:14px;padding-bottom:96px}
 h1{font-size:20px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
 .sub{color:var(--slate);font-size:13px;margin:4px 0 14px}
 
-/* The canvas is the board at 16:9, whatever the phone is. Absolute
-   positioning inside rather than CSS grid: dragging needs pixel maths, and
-   reading positions back out of a grid is far messier than owning them. */
+/* Preview only. Slots are positioned here, but modules are never dragged on
+   it — that was the unusable part. Assignment happens in the list below,
+   where the targets are full-width rows. */
 #canvas{position:relative;width:100%;aspect-ratio:16/9;background:#000;
         border:1px solid var(--rail);border-radius:10px;overflow:hidden;
         touch-action:none}
-#grid{position:absolute;inset:0;pointer-events:none;opacity:.5}
-/* Slightly translucent: cards can overlap, and an opaque one makes whatever
-   is beneath it both invisible and unselectable. */
-.mod{position:absolute;background:rgba(27,25,23,.88);border:1.5px solid var(--rail);
-     border-radius:6px;overflow:hidden;touch-action:none;cursor:move;
-     display:flex;align-items:center;justify-content:center;text-align:center}
-.mod .nm{font-size:11px;font-weight:700;letter-spacing:.05em;
-         text-transform:uppercase;padding:2px;pointer-events:none;
-         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.mod.off{opacity:.28;border-style:dashed}
-.mod.sel{border-color:var(--sodium);background:#2a2723;z-index:5}
-.mod.drag{opacity:.85;z-index:9}
-/* Resize grip, bottom-right. 26px because a 10px handle is unusable with a
-   thumb, and this whole thing is meant to be driven from the couch. */
-.grip{position:absolute;right:0;bottom:0;width:26px;height:26px;cursor:nwse-resize;
+#grid{position:absolute;inset:0;pointer-events:none;opacity:.45}
+.slot{position:absolute;background:rgba(27,25,23,.92);border:1.5px solid var(--rail);
+      border-radius:6px;overflow:hidden;touch-action:none;
+      display:flex;align-items:center;justify-content:center;text-align:center}
+.slot .nm{font-size:10.5px;font-weight:700;letter-spacing:.05em;
+          text-transform:uppercase;padding:2px;pointer-events:none;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.slot.sel{border-color:var(--sodium);background:#2a2723;z-index:5}
+.slot.bad{border-color:var(--red);background:#2a1414}
+/* Uncovered cells. Hatched rather than filled so they read as absence,
+   not as another card. Only regions worth caring about get a size label. */
+.gap{position:absolute;pointer-events:none;border-radius:4px;
+     background:repeating-linear-gradient(45deg,#ffffff08 0 6px,transparent 6px 12px)}
+.gap.big{background:repeating-linear-gradient(45deg,#d9534a26 0 6px,transparent 6px 12px);
+         outline:1px dashed #d9534a66;outline-offset:-2px;
+         display:flex;align-items:center;justify-content:center}
+.gap.big span{font-size:10px;font-weight:700;letter-spacing:.08em;color:#d9534a;
+              background:#1b1917cc;padding:1px 5px;border-radius:3px}
+#gaps{margin:12px 0 0;padding:10px 12px;border-radius:9px;background:var(--sunk);
+      border:1px solid var(--rail);font-size:13px;color:var(--slate)}
+#gaps b{color:var(--dust)}
+#gaps.on{background:#241a18;border-color:#d9534a66;color:#e0b6b1}
+#gaps.on b{color:#fff}
+.grip{position:absolute;right:0;bottom:0;width:28px;height:28px;
       background:linear-gradient(135deg,transparent 46%,var(--sodium) 46%);
       opacity:0;touch-action:none}
-.mod.sel .grip{opacity:1}
-/* Gallery's footprint comes from its Shape setting, so there is nothing to
-   drag here — showing a grip that does nothing is worse than showing none. */
-.mod.fixed{border-style:solid;border-color:#4a463f}
-.mod.fixed .nm:after{content:" ▪";opacity:.5}
-/* A card that would be hidden by an overlap. Red outline plus a hatch, so
-   it reads as "this disappears" rather than "this is selected". */
-.mod.clash{border-color:var(--red);border-width:2px}
-.mod.buried{background:repeating-linear-gradient(45deg,#2a1414 0 8px,#1b1917 8px 16px)}
-.mod.buried .nm{color:var(--red)}
-#warn{margin:10px 0 0;padding:11px 13px;border-radius:9px;background:#2a1414;
-      border:1px solid var(--red);color:#ffb4ad;font-size:13.5px;display:none}
-#warn.on{display:block}
-#warn.note{background:#231f14;border-color:var(--rail);color:#cbbfa4}
-.mod.under{border-style:dashed;opacity:.6}
-#warn b{color:#fff}
-.togline{display:flex;align-items:center;gap:12px;padding:12px 2px;
-         border-bottom:1px solid var(--rail);font-size:14px}
-.togline .txt2{flex:1}.togline .ds{font-size:12px;color:var(--slate)}
-.ghost{position:absolute;border:2px dashed var(--sodium);border-radius:6px;
-       pointer-events:none;opacity:0;z-index:8}
+.slot.sel .grip{opacity:1}
 
 .bar{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 6px;align-items:center}
 button{background:var(--sunk);color:var(--dust);border:1px solid var(--rail);
@@ -288,62 +299,71 @@ button{background:var(--sunk);color:var(--dust);border:1px solid var(--rail);
 button.go{background:var(--sodium);color:#241c05;border-color:var(--sodium)}
 button.warn{color:var(--red)}
 button:disabled{opacity:.4}
-.list{margin-top:16px;border-top:1px solid var(--rail)}
-.row{display:flex;align-items:center;gap:12px;padding:12px 2px;
-     border-bottom:1px solid var(--rail)}
-.row .txt{flex:1;min-width:0}
-.row .nm2{font-weight:700}
-.row .ds{font-size:12px;color:var(--slate)}
-.row.sel .nm2{color:var(--sodium)}
-.sw{position:relative;width:50px;height:29px;flex:none}
-.sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;z-index:2}
-.sw i{position:absolute;inset:0;background:var(--rail);border-radius:15px;transition:.15s}
-.sw i:after{content:"";position:absolute;width:23px;height:23px;left:3px;top:3px;
-            background:var(--dust);border-radius:50%;transition:.15s}
-.sw input:checked + i{background:var(--green)}
-.sw input:checked + i:after{transform:translateX(21px)}
-/* Settings for whichever module is selected. Appears only when that module
-   has any, so most selections show nothing here rather than an empty box. */
-#opts{margin-top:18px}
-#opts h2{font-size:14px;letter-spacing:.14em;text-transform:uppercase;
-         color:var(--sodium);margin-bottom:10px}
-.opt{padding:12px 2px;border-bottom:1px solid var(--rail)}
-.opt .lb{display:flex;justify-content:space-between;font-size:14px;
-         color:var(--slate);margin-bottom:9px}
-.opt .lb b{color:var(--dust);font-variant-numeric:tabular-nums}
-.opt input[type=range]{width:100%;accent-color:var(--sodium);height:30px}
-.chips{display:flex;gap:8px;flex-wrap:wrap}
-.chip{flex:1;min-width:96px;text-align:center;padding:11px 8px;border-radius:8px;
-      border:1px solid var(--rail);background:var(--sunk);font-size:14px}
-.chip.on{background:var(--sodium);color:#241c05;border-color:var(--sodium);
-         font-weight:700}
+
+h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--sodium);
+   margin:20px 0 8px}
+.sl{border:1px solid var(--rail);border-radius:10px;margin-bottom:10px;
+    background:var(--panel);overflow:hidden}
+.sl.sel{border-color:var(--sodium)}
+.slhead{display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--sunk)}
+.slhead .t{flex:1;min-width:0;font-weight:700;font-size:15px}
+.slhead .d{font-size:11.5px;color:var(--slate);font-weight:400}
+.modes{display:flex;gap:0;border:1px solid var(--rail);border-radius:7px;overflow:hidden}
+.modes span{padding:7px 10px;font-size:12px;background:var(--sunk)}
+.modes span.on{background:var(--sodium);color:#241c05;font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:12px;min-height:58px}
+/* Big targets: this is the whole point of the rebuild. */
+.chip{display:flex;align-items:center;gap:8px;padding:11px 13px;border-radius:9px;
+      background:var(--sunk);border:1px solid var(--rail);font-size:14.5px;
+      font-weight:600;touch-action:none}
+.chip.drag{opacity:.45}
+.chip .ord{font-family:ui-monospace,monospace;font-size:11px;color:var(--sodium)}
+.chips.over{background:#241f14;outline:2px dashed var(--sodium);outline-offset:-6px}
+.empty{color:var(--slate);font-size:13px;padding:4px 2px}
+.dwell{padding:0 12px 12px;display:none}
+.sl[data-mode="rotate"] .dwell{display:block}
+.dwell .lb{display:flex;justify-content:space-between;font-size:13px;
+           color:var(--slate);margin-bottom:6px}
+.dwell .lb b{color:var(--dust)}
+input[type=range]{width:100%;accent-color:var(--sodium);height:30px}
+#off{border-style:dashed}
+.opt{padding:12px;border-top:1px solid var(--rail)}
+.opt .lb{display:flex;justify-content:space-between;font-size:13.5px;
+         color:var(--slate);margin-bottom:8px}
+.opt .lb b{color:var(--dust)}
+.ochips{display:flex;gap:8px;flex-wrap:wrap}
+.ochip{flex:1;min-width:92px;text-align:center;padding:10px 8px;border-radius:8px;
+       border:1px solid var(--rail);background:var(--sunk);font-size:13.5px}
+.ochip.on{background:var(--sodium);color:#241c05;border-color:var(--sodium);font-weight:700}
 #status{position:fixed;left:0;right:0;bottom:0;background:var(--sunk);
-        border-top:1px solid var(--rail);padding:12px 14px;font-size:14px;
-        display:flex;gap:10px;align-items:center}
+        border-top:1px solid var(--rail);padding:12px 14px;font-size:14px;display:flex;gap:10px}
 #status .msg{flex:1;min-width:0;color:var(--slate)}
 #status .msg.ok{color:var(--green)} #status .msg.bad{color:var(--red)}
 </style></head><body>
 
 <h1>Board layout</h1>
-<div class="sub">Drag to move. Tap to select, then drag the corner to resize.</div>
+<div class="sub">Drag a slot to move it. Tap to select, then drag its corner to resize.</div>
 
-<div id="canvas"><canvas id="grid"></canvas><div class="ghost" id="ghost"></div></div>
+<div id="canvas"><canvas id="grid"></canvas></div>
 
-<div id="warn"></div>
-
-<div class="togline">
-  <div class="txt2"><b>Push cards aside</b>
-    <div class="ds">Move neighbours out of the way instead of burying them</div></div>
-  <label class="sw"><input type="checkbox" id="push" checked><i></i></label>
-</div>
+<div id="gaps"></div>
 
 <div class="bar">
   <button id="undo" disabled>Undo</button>
+  <button id="fill" disabled>Fill gaps</button>
+  <button id="addslot">Add slot</button>
+  <button id="delslot" disabled>Delete slot</button>
   <button id="reset" class="warn">Defaults</button>
   <button id="save" class="go" style="margin-left:auto">Save</button>
 </div>
 
-<div class="list" id="list"></div>
+<h2>Slots</h2>
+<div id="slots"></div>
+
+<h2>Not shown</h2>
+<div class="sl" id="offwrap"><div class="chips" id="off" data-slot="__off__"></div></div>
+
+<h2 id="optshead" style="display:none">Module settings</h2>
 <div id="opts"></div>
 
 <div id="status"><span class="msg" id="msg">Loaded</span></div>
@@ -351,12 +371,39 @@ button:disabled{opacity:.4}
 <script>
 const COLS = {{COLS}}, ROWS = {{ROWS}};
 const MODULES = {{MODULES}};
+const OPTS = {{OPTS}};
+const SLOT_MIN = {{SLOT_MIN}};
 const MINS = {{MINS}};
+
+/* A slot must fit its largest occupant on each axis — same rule the server
+   applies, so the editor can't offer a size that gets clamped on save. */
+function slotMin(mods){
+  let w = SLOT_MIN[0], h = SLOT_MIN[1];
+  (mods || []).forEach(k => {
+    const m = MINS[k]; if(!m) return;
+    w = Math.max(w, m[0]); h = Math.max(h, m[1]);
+  });
+  return [w, h];
+}
+const DEFAULTS = {{DEFAULTS}};
 let L = {{LAYOUT}};
-let sel = null, dirty = false, history = [];
+let sel = null, dirty = false, optFor = null, history = [];
+
+/* Undo. Fill, delete and drops all move things the user didn't touch
+   directly, so there has to be a way back that isn't "reset everything". */
+function snapshot(){
+  history.push(JSON.stringify(L));
+  if(history.length > 30) history.shift();
+  const b = document.getElementById("undo");
+  if(b) b.disabled = false;
+}
 
 const $ = s => document.querySelector(s);
 const canvas = $("#canvas");
+const label = k => (MODULES.find(m => m[0] === k) || [k, k])[1];
+const slotOf = id => L.slots.find(s => s.id === id);
+const mark = (t, c) => { const m = $("#msg"); m.textContent = t; m.className = "msg " + (c||""); };
+const touch = t => { dirty = true; mark(t || "Unsaved changes"); };
 
 function cell(){ return {w: canvas.clientWidth / COLS, h: canvas.clientHeight / ROWS}; }
 
@@ -368,361 +415,479 @@ function drawGrid(){
   x.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   x.strokeStyle = "#37342f"; x.lineWidth = .5;
   const cs = cell();
-  for(let i = 1; i < COLS; i++){
-    x.beginPath(); x.moveTo(i*cs.w, 0); x.lineTo(i*cs.w, canvas.clientHeight); x.stroke();
-  }
-  for(let j = 1; j < ROWS; j++){
-    x.beginPath(); x.moveTo(0, j*cs.h); x.lineTo(canvas.clientWidth, j*cs.h); x.stroke();
-  }
+  for(let i = 1; i < COLS; i++){ x.beginPath(); x.moveTo(i*cs.w,0); x.lineTo(i*cs.w,canvas.clientHeight); x.stroke(); }
+  for(let j = 1; j < ROWS; j++){ x.beginPath(); x.moveTo(0,j*cs.h); x.lineTo(canvas.clientWidth,j*cs.h); x.stroke(); }
 }
 
-function place(el, m){
+function overlaps(a, b){
+  return a.col < b.col+b.w && b.col < a.col+a.w && a.row < b.row+b.h && b.row < a.row+a.h;
+}
+function collides(s){
+  return L.slots.some(o => o !== s && overlaps(s, o));
+}
+
+function place(el, s){
   const cs = cell();
-  el.style.left   = ((m.col-1) * cs.w + 1) + "px";
-  el.style.top    = ((m.row-1) * cs.h + 1) + "px";
-  el.style.width  = (m.w * cs.w - 2) + "px";
-  el.style.height = (m.h * cs.h - 2) + "px";
+  el.style.left   = ((s.col-1)*cs.w + 1) + "px";
+  el.style.top    = ((s.row-1)*cs.h + 1) + "px";
+  el.style.width  = (s.w*cs.w - 2) + "px";
+  el.style.height = (s.h*cs.h - 2) + "px";
 }
 
-function build(){
-  canvas.querySelectorAll(".mod").forEach(n => n.remove());
-  /* Painted lowest priority first, so a fallback card sits *under* the ones
-     it backs up. Appending in module order put the gallery on top of the
-     whole board and nothing else could be tapped. */
-  const paintOrder = MODULES.slice().sort((a, b) =>
-    ((L.modules[a[0]]||{}).priority || 0) - ((L.modules[b[0]]||{}).priority || 0));
-  paintOrder.forEach(([key, label]) => {
-    const m = L.modules[key];
+function buildCanvas(){
+  canvas.querySelectorAll(".slot").forEach(n => n.remove());
+  L.slots.forEach(s => {
     const el = document.createElement("div");
-    el.className = "mod" + (m.on ? "" : " off") + (sel === key ? " sel" : "");
-    el.dataset.key = key;
-    const fixed = key === "gallery";
-    if(fixed) el.classList.add("fixed");
-    el.innerHTML = `<span class="nm">${label}</span>` +
-                   (fixed ? "" : `<span class="grip"></span>`);
-    place(el, m);
+    el.className = "slot" + (sel === s.id ? " sel" : "") + (collides(s) ? " bad" : "");
+    el.dataset.id = s.id;
+    const names = s.modules.map(label).join(" / ") || "empty";
+    el.innerHTML = `<span class="nm">${names}</span><span class="grip"></span>`;
+    place(el, s);
     canvas.appendChild(el);
   });
-  buildList();
-  buildOpts();
-  paintCollisions();
 }
 
-function buildList(){
-  $("#list").innerHTML = MODULES.map(([key, label, desc]) => {
-    const m = L.modules[key];
-    return `<div class="row ${sel===key?"sel":""}" data-key="${key}">
-      <div class="txt"><div class="nm2">${label}</div>
-        <div class="ds">${desc} &middot; ${m.w}&times;${m.h} at ${m.col},${m.row}</div></div>
-      <label class="sw"><input type="checkbox" data-on="${key}" ${m.on?"checked":""}><i></i></label>
-    </div>`;
-  }).join("");
+function buildSlots(){
+  $("#slots").innerHTML = L.slots.map(s => `
+    <div class="sl ${sel===s.id?"sel":""}" data-mode="${s.mode}" data-id="${s.id}">
+      <div class="slhead">
+        <div class="t">${s.w}&times;${s.h} at ${s.col},${s.row}
+          <div class="d">${s.modules.length} module${s.modules.length===1?"":"s"}${
+            (() => { const [mw,mh] = slotMin(s.modules);
+                     return (mw>SLOT_MIN[0]||mh>SLOT_MIN[1])
+                       ? ` &middot; min ${mw}×${mh}` : ""; })()}</div></div>
+        <div class="modes" data-id="${s.id}">
+          <span data-mode="single"   class="${s.mode==="single"?"on":""}">One</span>
+          <span data-mode="takeover" class="${s.mode==="takeover"?"on":""}">Takeover</span>
+          <span data-mode="rotate"   class="${s.mode==="rotate"?"on":""}">Rotate</span>
+        </div>
+      </div>
+      <div class="chips" data-slot="${s.id}">
+        ${s.modules.length
+          ? s.modules.map((k,i) => `<div class="chip" draggable="true" data-mod="${k}">
+              ${s.mode!=="rotate" ? `<span class="ord">${i+1}</span>` : ""}${label(k)}</div>`).join("")
+          : `<div class="empty">Drag a module here</div>`}
+      </div>
+      <div class="dwell">
+        <div class="lb"><span>Seconds each</span><b>${s.dwell}</b></div>
+        <input type="range" min="{{DMIN}}" max="{{DMAX}}" value="${s.dwell}" data-dwell="${s.id}">
+      </div>
+    </div>`).join("");
+  $("#off").innerHTML = L.off.length
+    ? L.off.map(k => `<div class="chip" draggable="true" data-mod="${k}">${label(k)}</div>`).join("")
+    : `<div class="empty">Everything is on the board</div>`;
 }
-
-/* Controls are generated from the OPTS table rather than written per module,
-   so a new knob is one line of Python and appears here automatically. */
-const OPTS = {{OPTS}};
 
 function buildOpts(){
-  const box = $("#opts");
-  if(!sel){ box.innerHTML = ""; return; }
-  const nm = MODULES.find(m => m[0] === sel)[1];
-  /* Priority applies to every module, not just the ones with settings: it is
-     what decides who survives an overlap, so it has to be reachable for the
-     card that is currently losing one. */
-  const pr = L.modules[sel].priority || 0;
-  const prBlock = `<div class="opt">
-      <div class="lb"><span>Priority when overlapping</span><b id="v_pri">${pr}</b></div>
-      <input type="range" min="0" max="20" value="${pr}" id="pri">
-      <div class="ds" style="margin-top:7px;color:var(--slate);font-size:12px">
-        Higher wins the cells. Equal priority is broken by board order.</div>
-    </div>`;
-  if(!OPTS[sel]){ box.innerHTML = `<h2>${nm} settings</h2>${prBlock}`; return; }
-  const o = L.modules[sel].opts || {};
-  const rows = OPTS[sel].map(([name, label, kind, spec, dflt]) => {
-    const v = (name in o) ? o[name] : dflt;
-    if(kind === "range"){
-      const [lo, hi] = spec;
-      return `<div class="opt"><div class="lb"><span>${label}</span><b id="v_${name}">${v}</b></div>
-        <input type="range" min="${lo}" max="${hi}" value="${v}" data-opt="${name}"></div>`;
-    }
-    if(kind === "chips"){
-      return `<div class="opt"><div class="lb"><span>${label}</span></div>
-        <div class="chips">${spec.map(([val,lab]) =>
-          `<div class="chip ${v===val?"on":""}" data-opt="${name}" data-val="${val}">${lab}</div>`
+  const withOpts = [...L.slots.flatMap(s => s.modules)].filter(k => OPTS[k]);
+  $("#optshead").style.display = withOpts.length ? "" : "none";
+  $("#opts").innerHTML = withOpts.map(k => {
+    const o = (L.opts && L.opts[k]) || {};
+    const rows = OPTS[k].map(([name, lab, kind, spec, dflt]) => {
+      const v = (name in o) ? o[name] : dflt;
+      if(kind === "range")
+        return `<div class="opt"><div class="lb"><span>${lab}</span><b>${v}</b></div>
+          <input type="range" min="${spec[0]}" max="${spec[1]}" value="${v}"
+                 data-mod="${k}" data-opt="${name}"></div>`;
+      const cur = kind === "multi" ? (Array.isArray(v)?v:[]) : [v];
+      return `<div class="opt"><div class="lb"><span>${lab}</span></div>
+        <div class="ochips">${spec.map(([val,l2]) =>
+          `<div class="ochip ${cur.includes(val)?"on":""}" data-mod="${k}"
+                data-${kind==="multi"?"multi":"opt"}="${name}" data-val="${val}">${l2}</div>`
         ).join("")}</div></div>`;
-    }
-    const cur = Array.isArray(v) ? v : [];
-    return `<div class="opt"><div class="lb"><span>${label}</span></div>
-      <div class="chips">${spec.map(([val,lab]) =>
-        `<div class="chip ${cur.includes(val)?"on":""}" data-multi="${name}" data-val="${val}">${lab}</div>`
-      ).join("")}</div></div>`;
+    }).join("");
+    return `<div class="sl"><div class="slhead"><div class="t">${label(k)}</div></div>${rows}</div>`;
   }).join("");
-  box.innerHTML = `<h2>${nm} settings</h2>${prBlock}${rows}`;
 }
 
-$("#opts").addEventListener("input", e => {
-  if(e.target.id === "pri"){
-    L.modules[sel].priority = +e.target.value;
-    document.getElementById("v_pri").textContent = e.target.value;
-    dirty = true; paintCollisions(); mark("Unsaved changes");
-    return;
-  }
-  const name = e.target.dataset.opt;
-  if(!name || e.target.type !== "range") return;
-  L.modules[sel].opts = L.modules[sel].opts || {};
-  L.modules[sel].opts[name] = +e.target.value;
-  const out = document.getElementById("v_" + name);
-  if(out) out.textContent = e.target.value;
-  dirty = true; mark("Unsaved changes");
-});
+/* ------------------------------------------------------------------ gaps
+   Slots are placed by hand and cannot overlap, so the leftovers are real
+   holes on the wall. A thin strip along an edge reads as spacing; a big
+   region in the middle reads as a card that failed to load, which is what
+   makes this worth surfacing at all.
 
-$("#opts").addEventListener("click", e => {
-  const chip = e.target.closest(".chip");
-  if(!chip) return;
-  snapshot();
-  const o = L.modules[sel].opts = L.modules[sel].opts || {};
-  if(chip.dataset.multi){
-    const name = chip.dataset.multi, val = chip.dataset.val;
-    const cur = Array.isArray(o[name]) ? o[name].slice() : [];
-    const i = cur.indexOf(val);
-    if(i < 0) cur.push(val); else cur.splice(i, 1);
-    /* Turning everything off leaves a module with nothing to show, which
-       looks broken. The server refills it anyway; refuse here so the UI
-       doesn't lie about what was saved. */
-    if(!cur.length){ mark("Keep at least one", "bad"); history.pop(); return; }
-    o[name] = cur;
-  }else{
-    o[chip.dataset.opt] = chip.dataset.val;
-  }
-  dirty = true; buildOpts(); mark("Unsaved changes");
-});
+   Empty cells are grouped into rectangles by flood fill and then greedily
+   boxed, so the report is "one 6x4 hole" rather than 24 loose cells. */
+const GAP_MIN_CELLS = 6;          // below this it looks like breathing room
+// Largest hole a single step will absorb, and there is a running budget on
+// top. One card extending into a leftover strip is a fill; one card growing
+// to cover a quarter of the wall is a rebuild.
+const GAP_MAX_FILL = 30;
 
-/* ------------------------------------------------------------- collisions
-   Same rule the board uses: whoever has content wins, then priority, then
-   the order shipped in layout.json. The editor can't know whether Jellyfin
-   is playing, so it predicts on priority and order alone and says so. */
-const ORDER = L.order || MODULES.map(m => m[0]);
-
-function boxOf(k){ const m = L.modules[k]; return m; }
-function overlaps(a, b){
-  return a.col < b.col+b.w && b.col < a.col+a.w &&
-         a.row < b.row+b.h && b.row < a.row+a.h;
-}
-
-function collisions(){
-  const live = ORDER.filter(k => L.modules[k] && L.modules[k].on);
-  const pairs = [];
-  for(let i = 0; i < live.length; i++)
-    for(let j = i+1; j < live.length; j++){
-      const A = live[i], B = live[j];
-      if(!overlaps(boxOf(A), boxOf(B))) continue;
-      const pa = L.modules[A].priority || 0, pb = L.modules[B].priority || 0;
-      // Higher priority wins; on a tie the one earlier in ORDER survives.
-      const loser = pa === pb ? B : (pa > pb ? B : A);
-      // An equal-priority overlap is an accident: nothing distinguishes the
-      // two cards, so one vanishes for reasons the user never chose. A
-      // deliberate stack — media over services, anything over gallery — has
-      // different priorities and is how fallbacks are built.
-      pairs.push({a: A, b: B, loser, tie: pa === pb});
-    }
-  return pairs;
-}
-
-function paintCollisions(){
-  const pairs = collisions();
-  const ties = pairs.filter(p => p.tie);
-  const stacks = pairs.filter(p => !p.tie);
-  const buried = new Set(ties.map(p => p.loser));
-  const clashing = new Set(ties.flatMap(p => [p.a, p.b]));
-  const under = new Set(stacks.map(p => p.loser));
-  document.querySelectorAll(".mod").forEach(el => {
-    const k = el.dataset.key;
-    el.classList.toggle("clash", clashing.has(k));
-    el.classList.toggle("buried", buried.has(k));
-    el.classList.toggle("under", under.has(k) && !buried.has(k));
+function coverGrid(){
+  const g = Array.from({length: ROWS + 1}, () => new Array(COLS + 1).fill(false));
+  L.slots.forEach(s => {
+    for(let r = s.row; r < s.row + s.h; r++)
+      for(let c = s.col; c < s.col + s.w; c++)
+        if(r <= ROWS && c <= COLS) g[r][c] = true;
   });
-  const nm = k => MODULES.find(m => m[0] === k)[1];
-  const w = $("#warn");
-  if(!ties.length){
-    if(!stacks.length){ w.className = ""; w.innerHTML = ""; return; }
-    // Not a problem, so it gets a note rather than an alarm.
-    const lines = [...new Set(stacks.map(p =>
-      `${nm(p.loser)} sits under ${nm(p.loser === p.a ? p.b : p.a)}`))];
-    w.className = "on note";
-    w.innerHTML = lines.join("<br>") +
-      `<br><span style="opacity:.7">Shows when the card above it has nothing.</span>`;
-    return;
-  }
-  const lines = [...new Set(ties.map(p =>
-    `<b>${nm(p.loser)}</b> disappears — same priority as ${nm(p.loser === p.a ? p.b : p.a)}`))];
-  w.className = "on";
-  w.innerHTML = lines.join("<br>") +
-    `<br><span style="opacity:.75">Move it, or give one of them a higher priority.</span>`;
+  return g;
 }
 
-/* ------------------------------------------------------------------- push
-   Shove neighbours out of a dragged card's cells rather than burying them.
-   Tried in one direction at a time and only accepted if the pushed card
-   still fits on the grid — a card shoved off the edge would vanish just as
-   silently as one buried, which is the thing this is meant to prevent.
-   Bounded passes because a chain of shoves can cycle. */
-function pushAside(moved){
-  for(let pass = 0; pass < 5; pass++){
-    let moved_any = false;
-    for(const k of ORDER){
-      if(k === moved || !L.modules[k] || !L.modules[k].on) continue;
-      const a = boxOf(moved), b = boxOf(k);
-      if(!overlaps(a, b)) continue;
-      /* Vertical first: the board is a stack of horizontal bands, so sliding
-         a card down reads as intended and sliding it sideways usually does
-         not. Nearest direction wins the tie. */
-      const downDist = (a.row + a.h) - b.row;
-      const upDist   = (b.row + b.h) - a.row;
-      const tries = downDist <= upDist
-        ? [{row: a.row + a.h}, {row: a.row - b.h},
-           {col: a.col + a.w}, {col: a.col - b.w}]
-        : [{row: a.row - b.h}, {row: a.row + a.h},
-           {col: a.col - b.w}, {col: a.col + a.w}];
-      let placed = false;
-      for(const t of tries){
-        const col = t.col !== undefined ? t.col : b.col;
-        const row = t.row !== undefined ? t.row : b.row;
-        if(col < 1 || row < 1 || col + b.w - 1 > COLS || row + b.h - 1 > ROWS) continue;
-        const cand = {col, row, w: b.w, h: b.h};
-        if(overlaps(a, cand)) continue;
-        // A shove has to clear every other card, not just the one doing the
-        // shoving — otherwise pushing weather down parks it on the media
-        // strip and the collision simply moves house.
-        const blocked = ORDER.some(o =>
-          o !== k && o !== moved && L.modules[o] && L.modules[o].on &&
-          overlaps(cand, boxOf(o)));
-        if(blocked) continue;
-        b.col = col; b.row = row; placed = true; moved_any = true;
+/* Greedy maximal rectangles: take the first free cell, extend right as far
+   as it stays free, then down as far as the whole width stays free. Not a
+   minimal cover, but it names the holes the way a person would. */
+function gapRects(){
+  const g = coverGrid(), out = [];
+  for(let r = 1; r <= ROWS; r++)
+    for(let c = 1; c <= COLS; c++){
+      if(g[r][c]) continue;
+      let w = 0;
+      while(c + w <= COLS && !g[r][c + w]) w++;
+      let h = 1;
+      grow:
+      while(r + h <= ROWS){
+        for(let i = 0; i < w; i++) if(g[r + h][c + i]) break grow;
+        h++;
+      }
+      for(let rr = r; rr < r + h; rr++)
+        for(let cc = c; cc < c + w; cc++) g[rr][cc] = true;
+      out.push({col: c, row: r, w, h, cells: w * h});
+    }
+  return out.sort((a, b) => b.cells - a.cells);
+}
+
+function paintGaps(){
+  const rects = gapRects();
+  const cs = cell();
+  canvas.querySelectorAll(".gap").forEach(n => n.remove());
+  rects.forEach(g => {
+    const el = document.createElement("div");
+    el.className = "gap" + (g.cells >= GAP_MIN_CELLS ? " big" : "");
+    el.style.left   = ((g.col-1)*cs.w) + "px";
+    el.style.top    = ((g.row-1)*cs.h) + "px";
+    el.style.width  = (g.w*cs.w) + "px";
+    el.style.height = (g.h*cs.h) + "px";
+    if(g.cells >= GAP_MIN_CELLS) el.innerHTML = `<span>${g.w}×${g.h}</span>`;
+    canvas.insertBefore(el, canvas.firstChild.nextSibling);
+  });
+
+  const empty = rects.reduce((n, g) => n + g.cells, 0);
+  const total = COLS * ROWS;
+  const big = rects.filter(g => g.cells >= GAP_MIN_CELLS);
+  const el = $("#gaps");
+  el.className = big.length ? "on" : "";
+  $("#fill").disabled = !big.length;
+  el.innerHTML = big.length
+    ? `<b>${Math.round((1 - empty/total) * 100)}% covered</b> &middot; ` +
+      big.length + " empty " + (big.length === 1 ? "area" : "areas") +
+      " (" + big.map(g => g.w + "×" + g.h).join(", ") + ")"
+    : `<b>${Math.round((1 - empty/total) * 100)}% covered</b>` +
+      (empty ? " &middot; only thin edges left over" : " &middot; no gaps");
+}
+
+/* ------------------------------------------------------------------ fill
+   For each hole, find a neighbour that can grow into it without colliding.
+   Only whole-edge matches are taken: a slot is stretched into a gap when the
+   gap spans its full width or height on the touching side. Partial growth
+   would need splitting a slot in two, which is a bigger idea than a button.
+*/
+function fillGaps(){
+  snapshot();                       // fill can move several slots at once
+  let filled = 0;
+  /* Budget, not a ratio. A ratio cap was tried both ways and neither works:
+     measured against the current size it compounds across passes (16 cells
+     becomes 32, 64, 128 — the runaway it was meant to stop), and measured
+     against the starting size it refuses the ordinary case of a 6-cell slot
+     growing back into the 20-cell space it came from.
+
+     An absolute limit gets both right. A leftover strip is small; the void
+     left by two tiny slots on an empty board is not. */
+  let budget = Math.round(COLS * ROWS * 0.25);
+  for(let pass = 0; pass < 6; pass++){
+    const rects = gapRects().filter(g => g.cells >= 1);
+    if(!rects.length) break;
+    let any = false;
+    for(const g of rects){
+      for(const s of L.slots){
+        let want = null;
+        // gap directly below, same columns
+        if(s.col === g.col && s.w === g.w && s.row + s.h === g.row)
+          want = {col:s.col, row:s.row, w:s.w, h:s.h + g.h};
+        // directly above
+        else if(s.col === g.col && s.w === g.w && g.row + g.h === s.row)
+          want = {col:s.col, row:g.row, w:s.w, h:s.h + g.h};
+        // to the right, same rows
+        else if(s.row === g.row && s.h === g.h && s.col + s.w === g.col)
+          want = {col:s.col, row:s.row, w:s.w + g.w, h:s.h};
+        // to the left
+        else if(s.row === g.row && s.h === g.h && g.col + g.w === s.col)
+          want = {col:g.col, row:s.row, w:s.w + g.w, h:s.h};
+        if(!want) continue;
+        /* A card may extend into a leftover strip; it may not swallow the
+           board. Without this, two small slots on an empty grid grow until
+           they meet — which is a rebuild, not a fill. Doubling is the most a
+           single step can add. */
+        if(g.cells > GAP_MAX_FILL || g.cells > budget) continue;
+        if(want.col < 1 || want.row < 1 ||
+           want.col + want.w - 1 > COLS || want.row + want.h - 1 > ROWS) continue;
+        if(L.slots.some(o => o !== s && overlaps(want, o))) continue;
+        Object.assign(s, want);
+        filled += g.cells; budget -= g.cells; any = true;
         break;
       }
-      if(!placed){ /* nowhere to go — leave it and let the warning show */ }
+      if(any) break;
     }
-    if(!moved_any) break;
+    if(!any) break;
   }
+  if(filled){ touch("Filled " + filled + " cells"); build(); }
+  else { history.pop(); $("#undo").disabled = !history.length;
+         mark("Nothing next to those gaps can grow into them", "bad"); }
 }
 
-function snapshot(){
-  history.push(JSON.stringify(L));
-  if(history.length > 30) history.shift();
-  $("#undo").disabled = false;
-}
+function build(){ buildCanvas(); buildSlots(); buildOpts(); paintGaps(); }
 
-function mark(txt, cls){
-  const m = $("#msg"); m.textContent = txt; m.className = "msg " + (cls || "");
-}
-
-/* ------------------------------------------------------------ interaction
-   Pointer events rather than mouse or touch handlers: one code path covers
-   a finger on the wall Pi's own screen, a finger on your phone, and a mouse
-   on the MacBook. setPointerCapture keeps the drag alive when the finger
-   slides outside the box it started in. */
+/* ------------------------------------------------------------- slot drag
+   Pointer events so one path covers finger and mouse. Only slots move on the
+   canvas; modules never do. */
 let drag = null;
-
 canvas.addEventListener("pointerdown", e => {
-  const el = e.target.closest(".mod");
-  if(!el) { sel = null; build(); return; }
-  const key = el.dataset.key, m = L.modules[key];
-  const resizing = e.target.classList.contains("grip") && !el.classList.contains("fixed");
-  if(sel !== key){ sel = key; build(); }
-  const node = canvas.querySelector(`.mod[data-key="${key}"]`);
-  node.classList.add("drag");
+  const el = e.target.closest(".slot");
+  if(!el){ sel = null; build(); $("#delslot").disabled = true; return; }
+  const s = slotOf(el.dataset.id);
+  const resizing = e.target.classList.contains("grip");
+  if(sel !== s.id){ sel = s.id; build(); }
+  $("#delslot").disabled = false;
+  const node = canvas.querySelector(`.slot[data-id="${s.id}"]`);
   node.setPointerCapture(e.pointerId);
-  drag = {key, resizing, x0: e.clientX, y0: e.clientY, m: {...m}, moved: false, node};
-  snapshot();
+  drag = {s, resizing, x0: e.clientX, y0: e.clientY, base: {...s}, node, moved: false};
   e.preventDefault();
 });
-
 canvas.addEventListener("pointermove", e => {
   if(!drag) return;
   const cs = cell();
-  const dx = Math.round((e.clientX - drag.x0) / cs.w);
-  const dy = Math.round((e.clientY - drag.y0) / cs.h);
+  const dx = Math.round((e.clientX - drag.x0)/cs.w), dy = Math.round((e.clientY - drag.y0)/cs.h);
   if(dx || dy) drag.moved = true;
-  const m = L.modules[drag.key], b = drag.m;
-  const [mw, mh] = MINS[drag.key];
+  const s = drag.s, b = drag.base;
   if(drag.resizing){
-    m.w = Math.max(mw, Math.min(COLS - b.col + 1, b.w + dx));
-    m.h = Math.max(mh, Math.min(ROWS - b.row + 1, b.h + dy));
+    const [mw, mh] = slotMin(s.modules);
+    s.w = Math.max(mw, Math.min(COLS - b.col + 1, b.w + dx));
+    s.h = Math.max(mh, Math.min(ROWS - b.row + 1, b.h + dy));
   }else{
-    m.col = Math.max(1, Math.min(COLS - m.w + 1, b.col + dx));
-    m.row = Math.max(1, Math.min(ROWS - m.h + 1, b.row + dy));
+    s.col = Math.max(1, Math.min(COLS - s.w + 1, b.col + dx));
+    s.row = Math.max(1, Math.min(ROWS - s.h + 1, b.row + dy));
   }
-  place(drag.node, m);
-  buildList();
+  place(drag.node, s);
+  drag.node.classList.toggle("bad", collides(s));
 });
-
 function endDrag(){
   if(!drag) return;
-  drag.node.classList.remove("drag");
-  if(drag.moved){
-    if($("#push").checked) pushAside(drag.key);
-    dirty = true; build(); mark("Unsaved changes");
-  }
-  else history.pop();          // a tap to select is not an undo step
-  $("#undo").disabled = !history.length;
-  drag = null;
+  /* Overlap is refused outright rather than resolved. The server would drop
+     the slot anyway, and losing one on save is exactly the silent
+     disappearance this rebuild exists to prevent. */
+  if(drag.moved && collides(drag.s)){
+    Object.assign(drag.s, drag.base);
+    mark("Slots can't overlap — moved back", "bad");
+  }else if(drag.moved) touch();
+  drag = null; build();
 }
 canvas.addEventListener("pointerup", endDrag);
 canvas.addEventListener("pointercancel", endDrag);
 
-$("#list").addEventListener("change", e => {
-  const key = e.target.dataset.on;
-  if(!key) return;
+/* ------------------------------------------------------- module drag/drop
+   HTML5 drag for mouse, plus a pointer fallback for touch, which does not
+   fire dragstart on any mobile browser worth supporting. */
+let carry = null;
+
+/* Grow a slot to fit a module being dropped into it, if there is room.
+   Returns false when there isn't — better to refuse the drop than to accept
+   it and have the server silently clamp the slot back, or leave a module in
+   a box too small to say anything in. */
+function growToFit(s, mods){
+  const [mw, mh] = slotMin(mods);
+  if(s.w >= mw && s.h >= mh) return true;
+  const want = {col: s.col, row: s.row, w: Math.max(s.w, mw), h: Math.max(s.h, mh)};
+  // Try growing right/down first, then pull the origin back toward 1,1.
+  if(want.col + want.w - 1 > COLS) want.col = Math.max(1, COLS - want.w + 1);
+  if(want.row + want.h - 1 > ROWS) want.row = Math.max(1, ROWS - want.h + 1);
+  if(want.col + want.w - 1 > COLS || want.row + want.h - 1 > ROWS) return false;
+  if(L.slots.some(o => o !== s && overlaps(want, o))) return false;
+  Object.assign(s, want);
+  return true;
+}
+
+function moveMod(key, toSlot){
   snapshot();
-  L.modules[key].on = e.target.checked;
-  dirty = true; build(); mark("Unsaved changes");
+  const from = L.slots.find(s => s.modules.includes(key));
+  if(toSlot !== "__off__"){
+    const s = slotOf(toSlot);
+    if(!s) return;
+    if(s !== from && !growToFit(s, s.modules.concat([key]))){
+      history.pop(); $("#undo").disabled = !history.length;
+      const [mw, mh] = slotMin([key]);
+      mark(label(key) + " needs at least " + mw + "×" + mh +
+           " — no room to grow that slot", "bad");
+      return;
+    }
+  }
+  L.slots.forEach(s => { const i = s.modules.indexOf(key); if(i >= 0) s.modules.splice(i,1); });
+  L.off = L.off.filter(k => k !== key);
+  if(toSlot === "__off__") L.off.push(key);
+  else {
+    const s = slotOf(toSlot);
+    s.modules.push(key);
+    if(s.modules.length > 1 && s.mode === "single") s.mode = "takeover";
+  }
+  // Removing the largest occupant leaves the slot oversized, which is fine —
+  // shrinking it automatically would move things the user didn't ask to move.
+  touch(); build();
+}
+
+document.addEventListener("dragstart", e => {
+  const c = e.target.closest(".chip");
+  if(!c) return;
+  carry = c.dataset.mod; c.classList.add("drag");
+  e.dataTransfer.effectAllowed = "move";
+  try{ e.dataTransfer.setData("text/plain", carry); }catch(_){}
+});
+document.addEventListener("dragend", () => {
+  document.querySelectorAll(".chip.drag").forEach(c => c.classList.remove("drag"));
+  document.querySelectorAll(".chips.over").forEach(c => c.classList.remove("over"));
+  carry = null;
+});
+document.addEventListener("dragover", e => {
+  const z = e.target.closest(".chips");
+  if(!z || !carry) return;
+  e.preventDefault();
+  document.querySelectorAll(".chips.over").forEach(c => c.classList.remove("over"));
+  z.classList.add("over");
+});
+document.addEventListener("drop", e => {
+  const z = e.target.closest(".chips");
+  if(!z || !carry) return;
+  e.preventDefault();
+  moveMod(carry, z.dataset.slot); carry = null;
 });
 
-$("#list").addEventListener("click", e => {
-  const row = e.target.closest(".row");
-  if(!row || e.target.closest(".sw")) return;
-  sel = row.dataset.key; build();
+/* Touch path: track the finger and drop on whatever zone is under it. */
+let tdrag = null;
+document.addEventListener("pointerdown", e => {
+  if(e.pointerType === "mouse") return;
+  const c = e.target.closest(".chip");
+  if(!c) return;
+  tdrag = {key: c.dataset.mod, node: c, x: e.clientX, y: e.clientY, moved: false};
+  c.setPointerCapture(e.pointerId);
+});
+document.addEventListener("pointermove", e => {
+  if(!tdrag) return;
+  if(Math.abs(e.clientX-tdrag.x) + Math.abs(e.clientY-tdrag.y) > 8){
+    tdrag.moved = true; tdrag.node.classList.add("drag");
+  }
+  if(!tdrag.moved) return;
+  e.preventDefault();
+  const z = document.elementFromPoint(e.clientX, e.clientY);
+  const zone = z && z.closest(".chips");
+  document.querySelectorAll(".chips.over").forEach(c => c.classList.remove("over"));
+  if(zone) zone.classList.add("over");
+});
+document.addEventListener("pointerup", e => {
+  if(!tdrag) return;
+  const z = document.elementFromPoint(e.clientX, e.clientY);
+  const zone = z && z.closest(".chips");
+  tdrag.node.classList.remove("drag");
+  document.querySelectorAll(".chips.over").forEach(c => c.classList.remove("over"));
+  if(tdrag.moved && zone) moveMod(tdrag.key, zone.dataset.slot);
+  tdrag = null;
 });
 
-if(L.push === false) $("#push").checked = false;
+/* ---------------------------------------------------------------- controls */
+$("#slots").addEventListener("click", e => {
+  const m = e.target.closest(".modes span");
+  if(m){
+    const s = slotOf(e.target.closest(".modes").dataset.id);
+    s.mode = m.dataset.mode;
+    if(s.mode === "single" && s.modules.length > 1)
+      mark("One shows only the first module — the rest stay hidden");
+    touch(); build(); return;
+  }
+  const row = e.target.closest(".sl");
+  if(row && row.dataset.id){ sel = row.dataset.id; $("#delslot").disabled = false; build(); }
+});
+$("#slots").addEventListener("input", e => {
+  const id = e.target.dataset.dwell;
+  if(!id) return;
+  slotOf(id).dwell = +e.target.value;
+  e.target.closest(".dwell").querySelector("b").textContent = e.target.value;
+  touch();
+});
 
-$("#push").addEventListener("change", e => {
-  L.push = e.target.checked; dirty = true; mark("Unsaved changes");
+$("#opts").addEventListener("input", e => {
+  const k = e.target.dataset.mod, name = e.target.dataset.opt;
+  if(!k || !name || e.target.type !== "range") return;
+  L.opts[k] = L.opts[k] || {};
+  L.opts[k][name] = +e.target.value;
+  e.target.closest(".opt").querySelector("b").textContent = e.target.value;
+  touch();
+});
+$("#opts").addEventListener("click", e => {
+  const c = e.target.closest(".ochip");
+  if(!c) return;
+  const k = c.dataset.mod;
+  L.opts[k] = L.opts[k] || {};
+  if(c.dataset.multi){
+    const n = c.dataset.multi;
+    const cur = Array.isArray(L.opts[k][n]) ? L.opts[k][n].slice() : [];
+    const i = cur.indexOf(c.dataset.val);
+    if(i < 0) cur.push(c.dataset.val); else cur.splice(i,1);
+    if(!cur.length){ mark("Keep at least one", "bad"); return; }
+    L.opts[k][n] = cur;
+  }else L.opts[k][c.dataset.opt] = c.dataset.val;
+  touch(); buildOpts();
 });
 
 $("#undo").onclick = () => {
   if(!history.length) return;
   L = JSON.parse(history.pop());
   $("#undo").disabled = !history.length;
-  dirty = true; build(); mark("Undone");
+  sel = null; touch("Undone"); build();
 };
 
+$("#fill").onclick = fillGaps;
+
+$("#addslot").onclick = () => {
+  // Drop it in the first free spot rather than on top of something.
+  outer:
+  for(let r = 1; r <= ROWS - SLOT_MIN[1] + 1; r++)
+    for(let c = 1; c <= COLS - SLOT_MIN[0] + 1; c++){
+      const cand = {col:c, row:r, w:4, h:3};
+      if(cand.col+cand.w-1 > COLS || cand.row+cand.h-1 > ROWS) continue;
+      if(L.slots.some(s => overlaps(cand, s))) continue;
+      const id = "slot" + Date.now().toString(36).slice(-4);
+      L.slots.push({id, mode:"single", dwell:20, modules:[], ...cand});
+      sel = id; touch("Slot added"); build();
+      break outer;
+    }
+};
+$("#delslot").onclick = () => {
+  const s = slotOf(sel);
+  if(!s) return;
+  snapshot();
+  s.modules.forEach(k => L.off.push(k));
+  L.slots = L.slots.filter(x => x !== s);
+  sel = null; $("#delslot").disabled = true;
+  touch("Slot deleted — its modules moved to Not shown"); build();
+};
 $("#reset").onclick = () => {
   if(!confirm("Reset the layout to defaults?")) return;
   snapshot();
-  L = JSON.parse(JSON.stringify({{DEFAULTS}}));
-  dirty = true; build(); mark("Defaults restored — not saved yet");
+  L = JSON.parse(JSON.stringify(DEFAULTS));
+  sel = null; touch("Defaults restored — not saved yet"); build();
 };
-
 $("#save").onclick = async () => {
-  $("#save").disabled = true;
-  mark("Saving…");
+  $("#save").disabled = true; mark("Saving…");
   try{
     const r = await fetch("/layout/save", {method:"POST",
       headers:{"Content-Type":"application/json"}, body: JSON.stringify(L)});
     if(!r.ok) throw new Error(r.status);
-    L = await r.json();                 // server clamps; take back what it kept
+    L = await r.json();               // server clamps; take back what it kept
     dirty = false; build();
     mark("Saved — the wall updates within 10 seconds", "ok");
-  }catch(err){
-    mark("Save failed (" + err.message + ")", "bad");
-  }
+  }catch(err){ mark("Save failed (" + err.message + ")", "bad"); }
   $("#save").disabled = false;
 };
 
-addEventListener("beforeunload", e => { if(dirty){ e.preventDefault(); e.returnValue = ""; } });
-addEventListener("resize", () => { drawGrid(); build(); });
+addEventListener("beforeunload", e => { if(dirty){ e.preventDefault(); e.returnValue=""; } });
+addEventListener("resize", () => { drawGrid(); buildCanvas(); paintGaps(); });
 drawGrid(); build();
 </script></body></html>
 """
@@ -733,7 +898,29 @@ def page():
             .replace("{{COLS}}", str(COLS))
             .replace("{{ROWS}}", str(ROWS))
             .replace("{{MODULES}}", json.dumps([[m[0], m[1], m[2]] for m in MODULES]))
-            .replace("{{MINS}}", json.dumps(MINS))
             .replace("{{OPTS}}", json.dumps(OPTS))
-            .replace("{{DEFAULTS}}", json.dumps(DEFAULT))
+            .replace("{{SLOT_MIN}}", json.dumps(list(SLOT_MIN)))
+            .replace("{{MINS}}", json.dumps(MINS))
+            .replace("{{DMIN}}", str(DWELL_MIN))
+            .replace("{{DMAX}}", str(DWELL_MAX))
+            .replace("{{DEFAULTS}}", json.dumps(sanitize(DEFAULT)))
             .replace("{{LAYOUT}}", json.dumps(load())))
+
+
+def gallery_shape():
+    """Aspect ratio of whatever slot the gallery currently sits in.
+
+    The framing editor has to show the real frame, not a guess — adjusting a
+    photo against a 16:9 preview and then seeing it in a 2:3 slot is worse
+    than no editor. Falls back to the board's own 16:9 if the gallery is in
+    the off tray.
+    """
+    GAP, PAD = 20, 20
+    colw = (1920 - 2*PAD - (COLS-1)*GAP) / COLS
+    rowh = (1080 - 2*PAD - (ROWS-1)*GAP) / ROWS
+    for s in load()["slots"]:
+        if "gallery" in s["modules"]:
+            w = s["w"]*colw + (s["w"]-1)*GAP
+            h = s["h"]*rowh + (s["h"]-1)*GAP
+            return round(w / h, 4)
+    return round(16/9, 4)

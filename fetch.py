@@ -29,9 +29,16 @@ from xml.etree import ElementTree as ET
 
 import requests
 
-from config import NEWS_FEEDS, NEWS_KEEP, NEWS_MAX_AGE_HOURS, DATA_DIR
+from config import (NEWS_FEEDS, NEWS_KEEP, NEWS_MAX_AGE_HOURS, DATA_DIR,
+                    LAT, LON)
+
+try:
+    from config import NWS_ALERTS, NWS_CONTACT
+except ImportError:                     # older config.py
+    NWS_ALERTS, NWS_CONTACT = True, "board@localhost"
 
 DEST = os.path.join(DATA_DIR, "news.json")
+ALERTS = os.path.join(DATA_DIR, "alerts.json")
 TIMEOUT = 20
 UA = {"User-Agent": "board/1.0 (+wall dashboard)"}
 
@@ -138,8 +145,86 @@ def load_previous():
     return prev
 
 
+# NWS ranks severity with these words. Ordered worst first so the band can
+# show the most serious of several without parsing anything else.
+SEVERITY = ["Extreme", "Severe", "Moderate", "Minor", "Unknown"]
+# Urgency matters as much as severity: a Severe warning already in progress
+# outranks a Severe watch for tomorrow evening.
+URGENCY = ["Immediate", "Expected", "Future", "Past", "Unknown"]
+
+
+def rank(p):
+    try:
+        sev = SEVERITY.index(p.get("severity") or "Unknown")
+    except ValueError:
+        sev = len(SEVERITY)
+    try:
+        urg = URGENCY.index(p.get("urgency") or "Unknown")
+    except ValueError:
+        urg = len(URGENCY)
+    return (sev, urg)
+
+
+def alerts():
+    """Active NWS alerts for the board's point.
+
+    Written whether or not any are active — an empty list is meaningful, and
+    the page needs to be able to tell "nothing is happening" apart from "the
+    fetch never ran", which it does by the file's own timestamp.
+    """
+    url = ("https://api.weather.gov/alerts/active"
+           "?point=%.4f,%.4f&status=actual&message_type=alert" % (LAT, LON))
+    r = requests.get(url, timeout=TIMEOUT, headers={
+        "User-Agent": "board/1.0 (%s)" % NWS_CONTACT,
+        "Accept": "application/geo+json",
+    })
+    r.raise_for_status()
+    feats = (r.json() or {}).get("features") or []
+    out = []
+    for f in feats:
+        p = f.get("properties") or {}
+        ev = (p.get("event") or "").strip()
+        if not ev:
+            continue
+        out.append({
+            "event": ev,
+            "severity": p.get("severity") or "Unknown",
+            "urgency": p.get("urgency") or "Unknown",
+            # headline carries the times in plain words; description is
+            # paragraphs and has no place on a wall panel.
+            "headline": (p.get("headline") or "").strip()[:180],
+            "ends": p.get("ends") or p.get("expires") or "",
+        })
+    out.sort(key=lambda a: rank(a))
+    return out
+
+
+def write_alerts():
+    if not NWS_ALERTS:
+        return
+    try:
+        lst = alerts()
+        doc = {"ts": int(time.time()), "alerts": lst, "ok": True}
+        print("ok   NWS    %d active" % len(lst))
+    except Exception as e:
+        # Keep the last known list rather than clearing the band mid-storm,
+        # but mark it so the page can stop trusting it once it ages.
+        try:
+            with open(ALERTS) as f:
+                prev = json.load(f).get("alerts", [])
+        except Exception:
+            prev = []
+        doc = {"ts": int(time.time()), "alerts": prev, "ok": False}
+        print("fail NWS    %s" % e, file=sys.stderr)
+    tmp = ALERTS + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(doc, f, separators=(",", ":"))
+    os.replace(tmp, ALERTS)
+
+
 def main():
     os.makedirs(DATA_DIR, exist_ok=True)
+    write_alerts()
     prev = load_previous()
     now = time.time()
     floor = now - NEWS_MAX_AGE_HOURS * 3600

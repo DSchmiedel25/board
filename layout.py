@@ -37,7 +37,10 @@ LAYOUT = os.path.join(DATA_DIR, "layout.json")
 MODULES = [
     ("flag",     "Flag strip",  "Racing tonight, rained out, or standby",  4, 2),
     ("tracks",   "Tracks",      "All three tracks, next date and rain %",  4, 3),
-    ("weather",  "Weather",     "Now, forecast and the radar window",      3, 4),
+    ("weather",  "Weather",     "Now, three-day forecast and conditions",  3, 4),
+    # Below 3x3 the tile window is smaller than one 256px tile scaled up, so
+    # the map is a blurry crop with the pins stacked on top of each other.
+    ("radar",    "Radar",       "Rain moving in, with the three tracks",    3, 3),
     ("nascar",   "NASCAR",      "Next race per series, plus the field",    5, 3),
     ("wire",     "Wire",        "Headlines from your RSS feeds",           4, 1),
     ("media",    "Now playing", "Jellyfin — only while something streams", 4, 2),
@@ -84,7 +87,9 @@ DEFAULT = {
         "flag":     {"col": 1, "row": 1,  "w": 12, "h": 3,  "on": True,  "priority": 1},
         "tracks":   {"col": 1, "row": 4,  "w": 7,  "h": 6,  "on": True,  "priority": 1},
         "nascar":   {"col": 1, "row": 10, "w": 7,  "h": 4,  "on": True,  "priority": 1},
-        "weather":  {"col": 8, "row": 4,  "w": 5,  "h": 10, "on": True,  "priority": 1},
+        # The right column split in two: conditions on top, radar beneath.
+        "weather":  {"col": 8, "row": 4,  "w": 5,  "h": 6,  "on": True,  "priority": 1},
+        "radar":    {"col": 8, "row": 10, "w": 5,  "h": 4,  "on": True,  "priority": 1},
         "wire":     {"col": 1, "row": 14, "w": 12, "h": 2,  "on": True,  "priority": 1},
         "media":    {"col": 1, "row": 16, "w": 12, "h": 3,  "on": True,  "priority": 10},
         "services": {"col": 1, "row": 16, "w": 12, "h": 3,  "on": True,  "priority": 0},

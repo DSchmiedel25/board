@@ -161,7 +161,7 @@ body.no-media #media{display:none}
                 50%{box-shadow:inset 0 0 44px -14px rgba(247,167,44,.55)}}
 
 /* ------------------------------------------------------------ weather */
-#weather{grid-column:8/span 5;grid-row:4/span 10;position:relative;background:#1d3a63}
+#weather{grid-column:8/span 5;grid-row:4/span 6;position:relative;background:#1d3a63}
 #weather .body{position:relative;z-index:2}
 #sky{position:absolute;inset:0;z-index:0;width:100%;height:100%}
 #weather header{background:rgba(0,0,0,.28);position:relative;z-index:2}
@@ -183,8 +183,12 @@ body.no-media #media{display:none}
    Fixed tiles rather than a mapping library: a wall panel never pans or
    zooms, so there is nothing for Leaflet to do, and one fewer CDN to be
    offline when the internet is. */
-#radar{position:relative;flex:1;min-height:0;overflow:hidden;
-       border-top:1px solid rgba(255,255,255,.18);z-index:2}
+#radar{grid-column:8/span 5;grid-row:10/span 4;position:relative;
+       overflow:hidden;background:#0b1522}
+#radar > header{display:none}
+/* The tile maths reads this box's pixel size, so it has to fill the card
+   rather than sit in the flex flow the way it did inside the weather panel. */
+.rbox{position:absolute;inset:0;overflow:hidden}
 #radar .tiles{position:absolute;top:0;left:0;width:100%;height:100%;
               transform-origin:0 0}
 #radar .pins{position:absolute;inset:0}
@@ -456,7 +460,10 @@ body.no-media #media{display:none}
     <canvas id="sky"></canvas>
     <header><h2 id="wxWord">Weather</h2><span class="eyebrow right">Schenectady</span></header>
     <div class="body" id="wxBody"></div>
-    <div id="radar">
+  </section>
+
+  <section class="card" id="radar">
+    <div class="rbox" id="radarBox">
       <div class="tiles" id="radarBase"></div>
       <div class="tiles" id="radarEcho"></div>
       <div class="pins" id="radarPins"></div>
@@ -1044,10 +1051,24 @@ function project(lat, lng, z){
 }
 
 let radarFrames = [], radarHost = "", radarPos = 0, radarBuilt = "";
+/* The radar used to be a fixed slice of the weather card. Now it is a module
+   you can drag and resize, so the tile window has to be recomputed when the
+   box changes shape — otherwise the map keeps the geometry it had when the
+   page loaded and the track pins drift off their towns. */
+if (window.ResizeObserver){
+  let rt = null;
+  new ResizeObserver(() => {
+    clearTimeout(rt);
+    rt = setTimeout(() => { radarBuilt = ""; geo = null; buildBase(); }, 250);
+  }).observe(document.getElementById("radar"));
+}
 let geo = null;                     // tile window, shared by both layers
 
 function tileWindow(){
-  const box = $("#radar");
+  /* The inner box, not the card: .card is a flex column with padding, so its
+     clientWidth is a few pixels wider than the area the tiles actually fill,
+     and the pins would sit off by that much. */
+  const box = $("#radarBox");
   const w = box.clientWidth, h = box.clientHeight;
   if (!w || !h) return null;
   const vw = w / RS, vh = h / RS;

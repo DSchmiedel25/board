@@ -59,9 +59,10 @@ body{
   /* Now playing is a strip along the bottom rather than a fourth box in the
      left column — stacking four cards there squeezed the track rows into
      each other and clipped the last NASCAR series. */
-  grid-template-rows:auto 1.15fr 1fr 152px;
+  grid-template-rows:auto 1.15fr 1fr 128px 152px;
   grid-template-columns:1.32fr 1fr;
-  grid-template-areas:"flag flag" "tracks weather" "nascar weather" "media media";
+  grid-template-areas:"flag flag" "tracks weather" "nascar weather"
+                      "wire wire" "media media";
 }
 /* With nothing playing, the weather column grows downward rather than the
    race rows stretching across the full width — three items spread over
@@ -254,6 +255,37 @@ body.no-media #media{display:none}
 .podium.result .frow:nth-child(3) .pos,
 .podium.result .frow:nth-child(3) .dvr{color:#d99a5c}
 
+/* --------------------------------------------------------------- wire
+   Three headlines, fixed slots, swapped on a timer. A scrolling ticker is
+   the obvious move and the wrong one: anything in constant motion at the
+   edge of vision pulls your eye off whatever you were actually reading.
+   These sit still for 22 seconds and then cross-fade. */
+#wire{grid-area:wire}
+#wire > header{display:none}          /* 128px tall; a header eats a third */
+#wire .body{flex-direction:row;align-items:stretch;gap:var(--gap);
+            padding:14px var(--gap)}
+.wmark{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:15px;
+       letter-spacing:.18em;text-transform:uppercase;color:var(--slate);
+       flex:none;padding-right:var(--gap);border-right:1px solid var(--rail);
+       display:flex;flex-direction:column;justify-content:center;gap:.35em}
+.wmark .wage{color:var(--sodium)}
+.wrap{flex:1;min-width:0;display:flex;flex-direction:column;
+      justify-content:space-around}
+.wrow{display:flex;align-items:baseline;gap:1em;min-width:0;
+      transition:opacity .55s ease}
+.wrow.out{opacity:0}
+.wsrc{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
+      letter-spacing:.14em;color:var(--sodium);flex:0 0 74px;
+      text-align:right;text-transform:uppercase}
+/* One line, always. A headline that wraps to two pushes the row below it
+   off the card, and the layout has no room to absorb that. */
+.wtitle{font-size:29px;font-weight:700;letter-spacing:.02em;flex:1;
+        min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+        line-height:1.12}
+.wtime{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:14px;
+       color:var(--slate);flex:none}
+.wnone{color:var(--slate);font-size:20px;align-self:center}
+
 /* -------------------------------------------------------------- media */
 /* Services share the media slot; only one is ever visible. */
 #services{grid-area:media;position:relative;overflow:hidden}
@@ -404,6 +436,13 @@ body.no-media #media{display:none}
     <div class="body" id="ncBody"></div>
   </section>
 
+  <section class="card" id="wire">
+    <div class="body">
+      <div class="wmark"><span>Wire</span><span class="wage" id="wireAge">—</span></div>
+      <div class="wrap" id="wireBody"></div>
+    </div>
+  </section>
+
   <section class="card" id="services">
     <div class="body">
       <div class="shead" id="svcHead">Services</div>
@@ -422,6 +461,12 @@ body.no-media #media{display:none}
 
 <script>
 const $ = s => document.querySelector(s);
+/* Headlines are the only strings on the board that come from outside the
+   house. Six third-party feeds put an ampersand or a stray bracket in a
+   title sooner or later, and one of them breaks the row it lands in. */
+const esc = t => String(t == null ? "" : t)
+  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;");
 
 /* Scale the fixed surface to fill whatever screen it lands on. */
 function fit(){
@@ -665,6 +710,65 @@ function renderMedia(jf){
   $("#mediaBody").innerHTML = `<div class="streams">${cells}</div>`;
 }
 
+/* ----------------------------------------------------------------- wire
+   news.json is written by fetch.py on the cron cycle, separately from
+   state.json, so it is fetched separately and a stalled cron shows as a
+   stale age rather than taking the whole board offline. */
+const WIRE_ROWS = 3, WIRE_HOLD = 22000, WIRE_POLL = 300000;
+let wireItems = [], wireAt = 0, wireStamp = 0;
+
+function since(ts){
+  if(!ts) return "";
+  const m = Math.round((Date.now()/1000 - ts) / 60);
+  if(m < 1)  return "NOW";
+  if(m < 60) return m + "M";
+  const h = Math.round(m/60);
+  return h < 24 ? h + "H" : Math.round(h/24) + "D";
+}
+
+function paintWire(){
+  const box = $("#wireBody");
+  if(!wireItems.length){
+    box.innerHTML = `<div class="wnone">No headlines</div>`;
+    $("#wireAge").textContent = "\u2014";
+    return;
+  }
+  const rows = [];
+  for(let i = 0; i < Math.min(WIRE_ROWS, wireItems.length); i++){
+    const it = wireItems[(wireAt + i) % wireItems.length];
+    rows.push(`<div class="wrow">
+      <div class="wsrc">${esc(it.source||"")}</div>
+      <div class="wtitle">${esc(it.title||"")}</div>
+      <div class="wtime">${since(it.ts)}</div>
+    </div>`);
+  }
+  box.innerHTML = rows.join("");
+  $("#wireAge").textContent = since(wireStamp) || "\u2014";
+}
+
+function cycleWire(){
+  if(wireItems.length <= WIRE_ROWS) return;
+  const rows = document.querySelectorAll("#wireBody .wrow");
+  rows.forEach(r => r.classList.add("out"));
+  setTimeout(() => { wireAt = (wireAt + WIRE_ROWS) % wireItems.length;
+                     paintWire(); }, 560);
+}
+
+async function loadWire(){
+  try{
+    const r = await fetch("data/news.json?t="+Date.now(), {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    wireItems = d.items || [];
+    wireStamp = d.ts || 0;
+    if(wireAt >= wireItems.length) wireAt = 0;
+  }catch(e){
+    /* Leave the last good headlines up. The age counter climbing past an
+       hour is the tell that the cron job stopped. */
+  }
+  paintWire();
+}
+
 /* ---------------------------------------------------------------- radar
    Slippy-map maths done by hand. At zoom 7 one tile spans roughly 300km
    here, which is the right scale for watching a cell arrive from the west
@@ -895,6 +999,8 @@ async function load(){
   }
 }
 seedDrops(); paintSky(); buildBase(); load(); setInterval(load, POLL);
+loadWire(); setInterval(loadWire, WIRE_POLL);
+setInterval(cycleWire, WIRE_HOLD);
 </script>
 </body>
 </html>

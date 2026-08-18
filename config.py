@@ -24,11 +24,30 @@ LAT, LON = 42.8142, -73.9396          # Schenectady
 # does not. If you rename again, this line has to change.
 DIRTCHECK_BASE = "https://dschmiedel25.github.io/dirtcheck/data"
 
-# RSS feeds for the wall dashboard's wire panel. Add or remove freely.
+# RSS/Atom feeds for the wall dashboard's wire panel.
+#
+# (label, url). The label is what the card prints, so keep it short — it sits
+# in a 15px mono eyebrow and anything past about six characters crowds the
+# headline beside it. Named rather than positional on purpose: fetch.py used
+# to write news1.xml, news2.xml by index, so deleting a feed from the middle
+# renumbered every file after it and left an orphan on disk that still looked
+# live. Labels are stable under edits.
 NEWS_FEEDS = [
-    "https://feeds.npr.org/1001/rss.xml",
-    "https://feeds.washingtonpost.com/rss/national",
+    ("NR",    "https://www.nationalreview.com/feed/"),
+    ("EXAM",  "https://www.washingtonexaminer.com/feed/"),
+    ("WIRE",  "https://www.dailywire.com/feeds/rss.xml"),
+    ("DC",    "https://dailycaller.com/feed/"),
+    ("BBART", "https://www.breitbart.com/feed/"),
+    ("TH",    "https://townhall.com/rss"),
 ]
+
+# Headlines kept in news.json. The card shows far fewer; the surplus is there
+# so the rotation has somewhere to go and a single dead feed doesn't empty it.
+NEWS_KEEP = 24
+
+# Drop anything older than this. A feed that stops updating shouldn't leave
+# three-day-old headlines sitting on the wall looking current.
+NEWS_MAX_AGE_HOURS = 36
 
 # Calendar entries containing any of these are dropped — races already have
 # their own screen on the Pixoo.

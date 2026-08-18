@@ -58,6 +58,11 @@ MODULES = [
 #   kind "multi" -> spec is [(value, label), ...], value is a list
 OPTS = {
     "gallery": [
+        ("ratio", "Shape", "chips",
+         [("16:9", "16:9"), ("3:2", "3:2"), ("4:3", "4:3"), ("1:1", "1:1"),
+          ("3:4", "3:4"), ("2:3", "2:3"), ("9:16", "9:16")], "3:2"),
+        ("size", "Size", "chips",
+         [("S", "Small"), ("M", "Medium"), ("L", "Large")], "M"),
         ("dwell", "Seconds per item", "range", (3, 120), 8),
         ("order", "Order", "chips",
          [("shuffle", "Shuffle"), ("sequence", "In order")], "shuffle"),
@@ -76,6 +81,25 @@ OPTS = {
         ("dwell", "Seconds per track page", "range", (6, 120), 20),
     ],
 }
+# Gallery footprint, locked to standard photo shapes rather than dragged.
+# Computed against the real cell geometry — 12 columns and 18 rows over
+# 1920x1080 with 20px padding and gaps gives 138.33 x 38.89 px cells, so the
+# cell grid is nowhere near square and the obvious spans are all wrong. Each
+# entry is the (w, h) whose *pixel* span lands closest to the named ratio at
+# roughly the named share of the screen. Worst case here is 3.8% off; most
+# are under 2%, which is invisible next to a photo's own crop.
+GALLERY_FIT = {
+    "16:9": {"S": (5, 8),  "M": (7, 11), "L": (9, 14)},
+    "3:2":  {"S": (5, 9),  "M": (6, 11), "L": (8, 15)},
+    "4:3":  {"S": (4, 8),  "M": (6, 12), "L": (8, 16)},
+    "1:1":  {"S": (3, 8),  "M": (5, 13), "L": (6, 16)},
+    "3:4":  {"S": (3, 11), "M": (4, 14), "L": (5, 18)},
+    "2:3":  {"S": (3, 12), "M": (4, 16), "L": (4, 16)},
+    # 9:16 is so tall that one span covers every size — 3x14 is already
+    # full height. Listed three times so the size control still answers.
+    "9:16": {"S": (3, 14), "M": (3, 14), "L": (3, 14)},
+}
+
 KEYS = [m[0] for m in MODULES]
 MINS = {m[0]: (m[3], m[4]) for m in MODULES}
 LABELS = {m[0]: m[1] for m in MODULES}
@@ -95,7 +119,11 @@ DEFAULT = {
         "services": {"col": 1, "row": 16, "w": 12, "h": 3,  "on": True,  "priority": 0},
         # Sits under the whole racing block. In season nothing sees it; from
         # November to February it is what's on the wall.
-        "gallery":  {"col": 1, "row": 1,  "w": 12, "h": 13, "on": True,  "priority": 0},
+        # 3:2 medium — the shape a phone camera actually produces. It no
+        # longer spans the whole board: a full-bleed panel at priority 0 was
+        # invisible on the wall but drew over every other card in the editor,
+        # which is why nothing else could be selected.
+        "gallery":  {"col": 1, "row": 4,  "w": 6,  "h": 11, "on": True,  "priority": 0},
     },
     "gap": 20,
     "ts": 0,
@@ -138,6 +166,16 @@ def sanitize(doc):
         }
         if key in OPTS:
             out["modules"][key]["opts"] = clean_opts(key, d.get("opts") or {})
+
+    # The gallery's own size is not a thing you drag. Photos have shapes and
+    # a slot that isn't one of them either bars the image or crops it, so the
+    # footprint is derived from the chosen ratio and clamped back onto the
+    # grid. Position stays free.
+    g = out["modules"]["gallery"]
+    gw, gh = GALLERY_FIT[g["opts"]["ratio"]][g["opts"]["size"]]
+    g["w"], g["h"] = gw, gh
+    g["col"] = clamp(g["col"], 1, COLS - gw + 1)
+    g["row"] = clamp(g["row"], 1, ROWS - gh + 1)
     return out
 
 
@@ -206,7 +244,9 @@ h1{font-size:20px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
         border:1px solid var(--rail);border-radius:10px;overflow:hidden;
         touch-action:none}
 #grid{position:absolute;inset:0;pointer-events:none;opacity:.5}
-.mod{position:absolute;background:var(--panel);border:1.5px solid var(--rail);
+/* Slightly translucent: cards can overlap, and an opaque one makes whatever
+   is beneath it both invisible and unselectable. */
+.mod{position:absolute;background:rgba(27,25,23,.88);border:1.5px solid var(--rail);
      border-radius:6px;overflow:hidden;touch-action:none;cursor:move;
      display:flex;align-items:center;justify-content:center;text-align:center}
 .mod .nm{font-size:11px;font-weight:700;letter-spacing:.05em;
@@ -221,6 +261,10 @@ h1{font-size:20px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
       background:linear-gradient(135deg,transparent 46%,var(--sodium) 46%);
       opacity:0;touch-action:none}
 .mod.sel .grip{opacity:1}
+/* Gallery's footprint comes from its Shape setting, so there is nothing to
+   drag here — showing a grip that does nothing is worse than showing none. */
+.mod.fixed{border-style:solid;border-color:#4a463f}
+.mod.fixed .nm:after{content:" ▪";opacity:.5}
 /* A card that would be hidden by an overlap. Red outline plus a hatch, so
    it reads as "this disappears" rather than "this is selected". */
 .mod.clash{border-color:var(--red);border-width:2px}
@@ -342,12 +386,20 @@ function place(el, m){
 
 function build(){
   canvas.querySelectorAll(".mod").forEach(n => n.remove());
-  MODULES.forEach(([key, label]) => {
+  /* Painted lowest priority first, so a fallback card sits *under* the ones
+     it backs up. Appending in module order put the gallery on top of the
+     whole board and nothing else could be tapped. */
+  const paintOrder = MODULES.slice().sort((a, b) =>
+    ((L.modules[a[0]]||{}).priority || 0) - ((L.modules[b[0]]||{}).priority || 0));
+  paintOrder.forEach(([key, label]) => {
     const m = L.modules[key];
     const el = document.createElement("div");
     el.className = "mod" + (m.on ? "" : " off") + (sel === key ? " sel" : "");
     el.dataset.key = key;
-    el.innerHTML = `<span class="nm">${label}</span><span class="grip"></span>`;
+    const fixed = key === "gallery";
+    if(fixed) el.classList.add("fixed");
+    el.innerHTML = `<span class="nm">${label}</span>` +
+                   (fixed ? "" : `<span class="grip"></span>`);
     place(el, m);
     canvas.appendChild(el);
   });
@@ -576,7 +628,7 @@ canvas.addEventListener("pointerdown", e => {
   const el = e.target.closest(".mod");
   if(!el) { sel = null; build(); return; }
   const key = el.dataset.key, m = L.modules[key];
-  const resizing = e.target.classList.contains("grip");
+  const resizing = e.target.classList.contains("grip") && !el.classList.contains("fixed");
   if(sel !== key){ sel = key; build(); }
   const node = canvas.querySelector(`.mod[data-key="${key}"]`);
   node.classList.add("drag");

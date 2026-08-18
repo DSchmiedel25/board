@@ -38,7 +38,7 @@ NEWS_FEEDS = [
     ("WIRE",  "https://www.dailywire.com/feeds/rss.xml"),
     ("DC",    "https://dailycaller.com/feed/"),
     ("BBART", "https://www.breitbart.com/feed/"),
-    ("TH",    "https://townhall.com/rss"),
+    ("TH",    "https://townhall.com/news/feed"),
 ]
 
 # Headlines kept in news.json. The card shows far fewer; the surplus is there

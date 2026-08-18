@@ -859,7 +859,7 @@ function glApplyOpts(o){
    Polled on its own short interval because editing is interactive: you drag
    on the couch and want the wall to agree before you've put the phone down. */
 const LAYOUT_POLL = 10000;
-let layoutSig = "";
+let layoutSig = "", layoutOrder = [];
 
 function applyLayout(doc){
   const mods = (doc && doc.modules) || null;
@@ -871,6 +871,7 @@ function applyLayout(doc){
   const app = document.getElementById("app");
   if(typeof doc.gap === "number") app.style.setProperty("--gap", doc.gap + "px");
 
+  if(Array.isArray(doc.order)) layoutOrder = doc.order;
   if(mods.gallery) glApplyOpts(mods.gallery.opts);
   if(mods.wire)    wireApplyOpts(mods.wire.opts);
 
@@ -892,7 +893,12 @@ function applyLayout(doc){
    something is playing. Cards that share any cell are compared by priority,
    and only the highest one that currently has something to show stays up. */
 function resolveSlots(){
-  const cards = [...document.querySelectorAll("#app > .card, #app > #flag")]
+  /* Tie-break order comes from layout.json, not from where the cards happen
+     to sit in the markup. The editor predicts the winner from the same list,
+     so what it warns about is what actually happens. */
+  const cards = (layoutOrder.length
+      ? layoutOrder.map(k => document.getElementById(k)).filter(Boolean)
+      : [...document.querySelectorAll("#app > .card, #app > #flag")])
     .filter(el => el.dataset.off !== "1");
   const box = el => {
     const cs = getComputedStyle(el);

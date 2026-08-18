@@ -81,11 +81,11 @@ LABELS = {m[0]: m[1] for m in MODULES}
 # the tracks/nascar/weather block 10, wire 2, media 3.
 DEFAULT = {
     "modules": {
-        "flag":     {"col": 1, "row": 1,  "w": 12, "h": 3,  "on": True,  "priority": 0},
-        "tracks":   {"col": 1, "row": 4,  "w": 7,  "h": 6,  "on": True,  "priority": 0},
-        "nascar":   {"col": 1, "row": 10, "w": 7,  "h": 4,  "on": True,  "priority": 0},
-        "weather":  {"col": 8, "row": 4,  "w": 5,  "h": 10, "on": True,  "priority": 0},
-        "wire":     {"col": 1, "row": 14, "w": 12, "h": 2,  "on": True,  "priority": 0},
+        "flag":     {"col": 1, "row": 1,  "w": 12, "h": 3,  "on": True,  "priority": 1},
+        "tracks":   {"col": 1, "row": 4,  "w": 7,  "h": 6,  "on": True,  "priority": 1},
+        "nascar":   {"col": 1, "row": 10, "w": 7,  "h": 4,  "on": True,  "priority": 1},
+        "weather":  {"col": 8, "row": 4,  "w": 5,  "h": 10, "on": True,  "priority": 1},
+        "wire":     {"col": 1, "row": 14, "w": 12, "h": 2,  "on": True,  "priority": 1},
         "media":    {"col": 1, "row": 16, "w": 12, "h": 3,  "on": True,  "priority": 10},
         "services": {"col": 1, "row": 16, "w": 12, "h": 3,  "on": True,  "priority": 0},
         # Sits under the whole racing block. In season nothing sees it; from
@@ -110,6 +110,12 @@ def sanitize(doc):
     rejected — a slightly-wrong board beats no board.
     """
     out = {"modules": {}, "gap": clamp(doc.get("gap", 20), 0, 60),
+           # Tie-break order, shipped rather than inferred. The board used to
+           # fall back to DOM order and the editor to this table's order, and
+           # the two disagreed — so the editor could promise weather would
+           # survive a collision that actually buried it.
+           "order": list(KEYS),
+           "push": bool(doc.get("push", True)),
            "ts": int(time.time())}
     src = doc.get("modules") or {}
     for key in KEYS:
@@ -210,6 +216,20 @@ h1{font-size:20px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
       background:linear-gradient(135deg,transparent 46%,var(--sodium) 46%);
       opacity:0;touch-action:none}
 .mod.sel .grip{opacity:1}
+/* A card that would be hidden by an overlap. Red outline plus a hatch, so
+   it reads as "this disappears" rather than "this is selected". */
+.mod.clash{border-color:var(--red);border-width:2px}
+.mod.buried{background:repeating-linear-gradient(45deg,#2a1414 0 8px,#1b1917 8px 16px)}
+.mod.buried .nm{color:var(--red)}
+#warn{margin:10px 0 0;padding:11px 13px;border-radius:9px;background:#2a1414;
+      border:1px solid var(--red);color:#ffb4ad;font-size:13.5px;display:none}
+#warn.on{display:block}
+#warn.note{background:#231f14;border-color:var(--rail);color:#cbbfa4}
+.mod.under{border-style:dashed;opacity:.6}
+#warn b{color:#fff}
+.togline{display:flex;align-items:center;gap:12px;padding:12px 2px;
+         border-bottom:1px solid var(--rail);font-size:14px}
+.togline .txt2{flex:1}.togline .ds{font-size:12px;color:var(--slate)}
 .ghost{position:absolute;border:2px dashed var(--sodium);border-radius:6px;
        pointer-events:none;opacity:0;z-index:8}
 
@@ -259,6 +279,14 @@ button:disabled{opacity:.4}
 <div class="sub">Drag to move. Tap to select, then drag the corner to resize.</div>
 
 <div id="canvas"><canvas id="grid"></canvas><div class="ghost" id="ghost"></div></div>
+
+<div id="warn"></div>
+
+<div class="togline">
+  <div class="txt2"><b>Push cards aside</b>
+    <div class="ds">Move neighbours out of the way instead of burying them</div></div>
+  <label class="sw"><input type="checkbox" id="push" checked><i></i></label>
+</div>
 
 <div class="bar">
   <button id="undo" disabled>Undo</button>
@@ -320,6 +348,7 @@ function build(){
   });
   buildList();
   buildOpts();
+  paintCollisions();
 }
 
 function buildList(){
@@ -339,7 +368,19 @@ const OPTS = {{OPTS}};
 
 function buildOpts(){
   const box = $("#opts");
-  if(!sel || !OPTS[sel]){ box.innerHTML = ""; return; }
+  if(!sel){ box.innerHTML = ""; return; }
+  const nm = MODULES.find(m => m[0] === sel)[1];
+  /* Priority applies to every module, not just the ones with settings: it is
+     what decides who survives an overlap, so it has to be reachable for the
+     card that is currently losing one. */
+  const pr = L.modules[sel].priority || 0;
+  const prBlock = `<div class="opt">
+      <div class="lb"><span>Priority when overlapping</span><b id="v_pri">${pr}</b></div>
+      <input type="range" min="0" max="20" value="${pr}" id="pri">
+      <div class="ds" style="margin-top:7px;color:var(--slate);font-size:12px">
+        Higher wins the cells. Equal priority is broken by board order.</div>
+    </div>`;
+  if(!OPTS[sel]){ box.innerHTML = `<h2>${nm} settings</h2>${prBlock}`; return; }
   const o = L.modules[sel].opts || {};
   const rows = OPTS[sel].map(([name, label, kind, spec, dflt]) => {
     const v = (name in o) ? o[name] : dflt;
@@ -360,10 +401,16 @@ function buildOpts(){
         `<div class="chip ${cur.includes(val)?"on":""}" data-multi="${name}" data-val="${val}">${lab}</div>`
       ).join("")}</div></div>`;
   }).join("");
-  box.innerHTML = `<h2>${MODULES.find(m=>m[0]===sel)[1]} settings</h2>${rows}`;
+  box.innerHTML = `<h2>${nm} settings</h2>${prBlock}${rows}`;
 }
 
 $("#opts").addEventListener("input", e => {
+  if(e.target.id === "pri"){
+    L.modules[sel].priority = +e.target.value;
+    document.getElementById("v_pri").textContent = e.target.value;
+    dirty = true; paintCollisions(); mark("Unsaved changes");
+    return;
+  }
   const name = e.target.dataset.opt;
   if(!name || e.target.type !== "range") return;
   L.modules[sel].opts = L.modules[sel].opts || {};
@@ -393,6 +440,115 @@ $("#opts").addEventListener("click", e => {
   }
   dirty = true; buildOpts(); mark("Unsaved changes");
 });
+
+/* ------------------------------------------------------------- collisions
+   Same rule the board uses: whoever has content wins, then priority, then
+   the order shipped in layout.json. The editor can't know whether Jellyfin
+   is playing, so it predicts on priority and order alone and says so. */
+const ORDER = L.order || MODULES.map(m => m[0]);
+
+function boxOf(k){ const m = L.modules[k]; return m; }
+function overlaps(a, b){
+  return a.col < b.col+b.w && b.col < a.col+a.w &&
+         a.row < b.row+b.h && b.row < a.row+a.h;
+}
+
+function collisions(){
+  const live = ORDER.filter(k => L.modules[k] && L.modules[k].on);
+  const pairs = [];
+  for(let i = 0; i < live.length; i++)
+    for(let j = i+1; j < live.length; j++){
+      const A = live[i], B = live[j];
+      if(!overlaps(boxOf(A), boxOf(B))) continue;
+      const pa = L.modules[A].priority || 0, pb = L.modules[B].priority || 0;
+      // Higher priority wins; on a tie the one earlier in ORDER survives.
+      const loser = pa === pb ? B : (pa > pb ? B : A);
+      // An equal-priority overlap is an accident: nothing distinguishes the
+      // two cards, so one vanishes for reasons the user never chose. A
+      // deliberate stack — media over services, anything over gallery — has
+      // different priorities and is how fallbacks are built.
+      pairs.push({a: A, b: B, loser, tie: pa === pb});
+    }
+  return pairs;
+}
+
+function paintCollisions(){
+  const pairs = collisions();
+  const ties = pairs.filter(p => p.tie);
+  const stacks = pairs.filter(p => !p.tie);
+  const buried = new Set(ties.map(p => p.loser));
+  const clashing = new Set(ties.flatMap(p => [p.a, p.b]));
+  const under = new Set(stacks.map(p => p.loser));
+  document.querySelectorAll(".mod").forEach(el => {
+    const k = el.dataset.key;
+    el.classList.toggle("clash", clashing.has(k));
+    el.classList.toggle("buried", buried.has(k));
+    el.classList.toggle("under", under.has(k) && !buried.has(k));
+  });
+  const nm = k => MODULES.find(m => m[0] === k)[1];
+  const w = $("#warn");
+  if(!ties.length){
+    if(!stacks.length){ w.className = ""; w.innerHTML = ""; return; }
+    // Not a problem, so it gets a note rather than an alarm.
+    const lines = [...new Set(stacks.map(p =>
+      `${nm(p.loser)} sits under ${nm(p.loser === p.a ? p.b : p.a)}`))];
+    w.className = "on note";
+    w.innerHTML = lines.join("<br>") +
+      `<br><span style="opacity:.7">Shows when the card above it has nothing.</span>`;
+    return;
+  }
+  const lines = [...new Set(ties.map(p =>
+    `<b>${nm(p.loser)}</b> disappears — same priority as ${nm(p.loser === p.a ? p.b : p.a)}`))];
+  w.className = "on";
+  w.innerHTML = lines.join("<br>") +
+    `<br><span style="opacity:.75">Move it, or give one of them a higher priority.</span>`;
+}
+
+/* ------------------------------------------------------------------- push
+   Shove neighbours out of a dragged card's cells rather than burying them.
+   Tried in one direction at a time and only accepted if the pushed card
+   still fits on the grid — a card shoved off the edge would vanish just as
+   silently as one buried, which is the thing this is meant to prevent.
+   Bounded passes because a chain of shoves can cycle. */
+function pushAside(moved){
+  for(let pass = 0; pass < 5; pass++){
+    let moved_any = false;
+    for(const k of ORDER){
+      if(k === moved || !L.modules[k] || !L.modules[k].on) continue;
+      const a = boxOf(moved), b = boxOf(k);
+      if(!overlaps(a, b)) continue;
+      /* Vertical first: the board is a stack of horizontal bands, so sliding
+         a card down reads as intended and sliding it sideways usually does
+         not. Nearest direction wins the tie. */
+      const downDist = (a.row + a.h) - b.row;
+      const upDist   = (b.row + b.h) - a.row;
+      const tries = downDist <= upDist
+        ? [{row: a.row + a.h}, {row: a.row - b.h},
+           {col: a.col + a.w}, {col: a.col - b.w}]
+        : [{row: a.row - b.h}, {row: a.row + a.h},
+           {col: a.col - b.w}, {col: a.col + a.w}];
+      let placed = false;
+      for(const t of tries){
+        const col = t.col !== undefined ? t.col : b.col;
+        const row = t.row !== undefined ? t.row : b.row;
+        if(col < 1 || row < 1 || col + b.w - 1 > COLS || row + b.h - 1 > ROWS) continue;
+        const cand = {col, row, w: b.w, h: b.h};
+        if(overlaps(a, cand)) continue;
+        // A shove has to clear every other card, not just the one doing the
+        // shoving — otherwise pushing weather down parks it on the media
+        // strip and the collision simply moves house.
+        const blocked = ORDER.some(o =>
+          o !== k && o !== moved && L.modules[o] && L.modules[o].on &&
+          overlaps(cand, boxOf(o)));
+        if(blocked) continue;
+        b.col = col; b.row = row; placed = true; moved_any = true;
+        break;
+      }
+      if(!placed){ /* nowhere to go — leave it and let the warning show */ }
+    }
+    if(!moved_any) break;
+  }
+}
 
 function snapshot(){
   history.push(JSON.stringify(L));
@@ -447,7 +603,10 @@ canvas.addEventListener("pointermove", e => {
 function endDrag(){
   if(!drag) return;
   drag.node.classList.remove("drag");
-  if(drag.moved){ dirty = true; mark("Unsaved changes"); }
+  if(drag.moved){
+    if($("#push").checked) pushAside(drag.key);
+    dirty = true; build(); mark("Unsaved changes");
+  }
   else history.pop();          // a tap to select is not an undo step
   $("#undo").disabled = !history.length;
   drag = null;
@@ -467,6 +626,12 @@ $("#list").addEventListener("click", e => {
   const row = e.target.closest(".row");
   if(!row || e.target.closest(".sw")) return;
   sel = row.dataset.key; build();
+});
+
+if(L.push === false) $("#push").checked = false;
+
+$("#push").addEventListener("change", e => {
+  L.push = e.target.checked; dirty = true; mark("Unsaved changes");
 });
 
 $("#undo").onclick = () => {

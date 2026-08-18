@@ -241,7 +241,7 @@ def health_rows():
     return "".join(rows) or '<div class="hrow"><span class="hname">no data yet</span></div>'
 
 
-PAGE = """<!doctype html><html><head><meta charset="utf-8">
+PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Board control</title>
 <style>
@@ -424,13 +424,17 @@ button.ghost{background:var(--sunk);color:var(--dust)}
 </form>
 
 <div class="col c-pho">
-<h2>Photos</h2>
+<h2>Photos &amp; clips</h2>
 <div class="card">
   <form method="post" enctype="multipart/form-data" action="/upload">
-    <input type="file" name="pic" accept="image/*" multiple id="pick">
+    <!-- image/* alone hides video in the phone picker, so clips could be
+         processed but never selected. HEIC needs naming explicitly on iOS. -->
+    <input type="file" name="pic" multiple id="pick"
+           accept="image/*,video/*,.gif,.heic,.heif,.mov,.mp4,.m4v,.webm">
     <label for="pick" class="filebtn">Choose photos</label>
     <button type="submit" class="plainup">Upload</button>
   </form>
+  <div class="sub" id="upstat"></div>
 
   <div id="editor" hidden>
     <div class="edhead"><span id="edcount"></span><span id="edname"></span></div>
@@ -490,7 +494,7 @@ setInterval(() => {
   const ox = out.getContext("2d");
   const zoom = document.getElementById("edzoom");
 
-  let queue = [], img = null, mode = "fill";
+  let queue = [], img = null, mode = "fill", current = null;
   let scale = 1, base = 1, tx = 0, ty = 0;
 
   function reset(){
@@ -546,12 +550,36 @@ setInterval(() => {
   }
 
   function next(){
-    if (!queue.length){ box.hidden = true; img = null; return; }
-    load(queue.shift());
+    if (!queue.length){ box.hidden = true; img = null; current = null; return; }
+    current = queue.shift();
+    load(current);
   }
 
-  pick.addEventListener("change", () => {
-    queue = Array.from(pick.files || []);
+  pick.addEventListener("change", async () => {
+    const all = Array.from(pick.files || []);
+    /* The crop editor draws into a canvas, which can only take an image.
+       Clips and GIFs have no 64x64 crop to choose anyway — the Pixoo isn't
+       their destination — so they bypass the editor and post straight to
+       /upload, where ffmpeg handles them. */
+    const isClip = f => /^video\//.test(f.type) || /\.(gif|mp4|mov|m4v|webm)$/i.test(f.name);
+    const clips = all.filter(isClip);
+    queue = all.filter(f => !isClip(f));
+
+    if (clips.length){
+      const st = document.getElementById("upstat");
+      st.textContent = "Uploading " + clips.length + " clip" +
+                       (clips.length === 1 ? "" : "s") + " — transcoding, this can take a minute…";
+      const fd = new FormData();
+      clips.forEach(f => fd.append("pic", f));
+      try{
+        await fetch("/upload", {method: "POST", body: fd});
+        st.textContent = "Clips added";
+      }catch(e){
+        st.textContent = "Clip upload failed";
+      }
+      if (!queue.length){ location.reload(); return; }
+    }
+    if (!queue.length) return;
     document.querySelector(".plainup").style.display = "none";
     next();
   });
@@ -597,6 +625,14 @@ setInterval(() => {
     body.set("name", document.getElementById("edname").textContent || "photo");
     await fetch("/crop", {method: "POST", body,
       headers: {"Content-Type": "application/x-www-form-urlencoded"}});
+    /* The crop path only ever produced the 64x64 Pixoo tile, so photos added
+       this way never reached the wall gallery. Post the untouched original
+       too — the wall wants the full-resolution frame, not the crop. */
+    if (current){
+      const fd = new FormData();
+      fd.append("pic", current);
+      fetch("/wall/add", {method: "POST", body: fd}).catch(() => {});
+    }
     if (queue.length) next(); else location.reload();
   });
 })();
@@ -750,6 +786,25 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
         n = int(self.headers.get("Content-Length") or 0)
+
+        if path == "/wall/add":
+            # Wall-resolution copy only. The Pixoo tile for this same photo
+            # arrives separately from the crop editor, already finished.
+            ctype = self.headers.get("Content-Type", "")
+            if n > MAX_UPLOAD or "boundary=" not in ctype:
+                self._send(b'{"error":"too large"}', "application/json", 400)
+                return
+            body = self.rfile.read(n)
+            boundary = ctype.split("boundary=", 1)[1].strip().strip('"')
+            done = 0
+            for name, blob in parse_multipart(body, boundary):
+                try:
+                    _wall.add(name, blob)
+                    done += 1
+                except Exception:
+                    pass
+            self._send(json.dumps({"added": done}).encode(), "application/json")
+            return
 
         if path == "/wall/delete":
             raw = self.rfile.read(n).decode()

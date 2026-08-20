@@ -69,7 +69,14 @@ MODULES = [
     # media's ceiling on height is the honest one: the card is flex-direction
     # row, so a tall slot gets a wide strip floating in space. Raise this when
     # the portrait layout exists, not before.
-    ("media",    "Now playing", "Jellyfin — only while something streams",4, 2, 12,  8,  3.0, 35.0),
+    # Height ceiling raised from 8 to 18 and the aspect range widened from a
+    # wide-strip-only 3.0-35.0 to 0.5-35.0. The strip layout (row of compact
+    # cells) still renders for a wide slot or multiple simultaneous viewers;
+    # a slot tall enough to be portrait-ish now gets a poster-forward hero
+    # layout instead — which needs the room this used to refuse to allow.
+    # 0.5 as the floor, not gallery's 0.667, so media can go slightly taller
+    # than a bare poster to fit the title/progress block underneath it.
+    ("media",    "Now playing", "Jellyfin — only while something streams",4, 2, 12, 18,  0.5, 35.0),
     ("services", "Services",    "Uptime Kuma health",                     3, 1, 12,  8,  2.0, 50.0),
     ("pihole",   "Pi-hole",     "Share of DNS blocked today, and traffic",4, 1, 12,  8,  3.0, 50.0),
     # Gallery is deliberately the loosest: framing is stored per image as a

@@ -710,6 +710,45 @@ body.no-media #media{display:none}
 #media[data-n="3"] .stitle{font-size:clamp(9px,calc(13.4 * var(--u)),73px)}
 #media[data-n="3"] .ssub{font-size:clamp(6px,calc(8.94 * var(--u)),49px)}
 
+/* ---------------------------------------------------------- media: hero
+   The strip above was built for a wide short bar and can't make the poster
+   the point no matter how tall its slot gets — 2/3 of a 3-row strip is
+   still a thumbnail. This is the other mode: one viewer, in a slot roomy
+   enough to be a poster rather than a bar. renderMedia measures the card's
+   own rendered box and rebuilds #mediaBody as one markup or the other each
+   poll — only one is ever in the DOM, so these rules are just the shared
+   geometry for whichever one that is. */
+#media .hero{position:absolute;inset:0;display:flex;flex-direction:column}
+/* No entrance animation here, unlike the dead #poster rule this was modelled
+   on: renderMedia rebuilds this markup on every 15s poll regardless of
+   whether anything changed, so an animation would replay the whole time a
+   movie is playing rather than once when it starts. */
+#media .heroArt{position:absolute;inset:0;width:100%;height:100%;
+                object-fit:cover;object-position:center 22%}
+#media .heroArt[data-empty]{display:none}
+/* Solid at the very bottom rather than fading to transparent — the progress
+   bar needs a floor it can sit on that reads at any poster's brightness,
+   not just the dark ones the scrim happens to suit. */
+#media .heroScrim{position:absolute;inset:0;z-index:1;
+  background:linear-gradient(to bottom,transparent 38%,
+              rgba(14,11,9,.55) 62%,rgba(14,11,9,.94) 88%,rgba(14,11,9,.98) 100%)}
+#media .heroInfo{position:relative;z-index:2;margin-top:auto;
+                 padding:var(--gap) calc(var(--gap)*1.2)}
+#media .hwho{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+            font-size:clamp(9px,calc(6.5 * var(--u)),56px);font-weight:800;
+            letter-spacing:.16em;color:var(--sodium);text-transform:uppercase;
+            margin-bottom:.4em}
+#media .htitle{font-size:clamp(16px,calc(15.3 * var(--u)),132px);font-weight:800;
+               line-height:1.05;letter-spacing:.005em;text-transform:uppercase;
+               /* Two lines rather than one truncated: a poster this size has
+                  the room, and "The Fellowship of the R…" answers nothing. */
+               display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+               overflow:hidden}
+#media .hsub{font-size:clamp(10px,calc(7.5 * var(--u)),65px);color:#cbb9a6;
+            margin-top:.25em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#media .heroInfo .prog{margin-top:clamp(8px,calc(6 * var(--u)),22px);
+                       height:clamp(5px,calc(4.3 * var(--u)),16px)}
+
 /* --------------------------------------------------------- unavailable
    A dead source says so. It never borrows the look of live data. */
 .down{flex:1;display:grid;place-items:center;text-align:center;color:var(--slate)}
@@ -1067,13 +1106,44 @@ function renderMedia(jf){
   // side by side; beyond that they stack as compact rows, because a wall
   // panel should never hide the fact that somebody else is watching.
   const all = (jf.all && jf.all.length) ? jf.all : [jf];
-  document.getElementById("media").dataset.n = Math.min(all.length, 3);
+  const card = document.getElementById("media");
+  card.dataset.n = Math.min(all.length, 3);
+
+  /* Hero vs strip is read from the card's own rendered box, not from which
+     modules share its slot — a slot's shape can change from the layout
+     editor without a matching code change here. One viewer, in a box that
+     isn't the classic wide bar, gets the poster; two+ viewers always get
+     the strip, since one hero poster can't speak for two different shows.
+     1.8 sits between a true poster (~0.7) and the old minimum bar (3.0) —
+     comfortably past the point a poster still fits above the text. */
+  const box = card.getBoundingClientRect();
+  const hero = all.length === 1 && box.height > 0 && (box.width / box.height) < 1.8;
+  card.dataset.mode = hero ? "hero" : "strip";
+
   /* Cache-bust on the title, not the clock: a new bust every poll would
      refetch the same image four times a minute and restart its animation. */
   const key = encodeURIComponent((jf.title||"") + (jf.sub||""));
   const src = jf.poster ? `${jf.poster}?k=${key}` : "";
   const back = $("#backdrop");
   back.style.backgroundImage = src ? `url("${src}")` : "none";
+
+  if(hero){
+    const v = all[0];
+    $("#mediaBody").innerHTML = `
+      <div class="hero">
+        ${src ? `<img class="heroArt" src="${src}" alt="" decoding="async"
+             onerror="this.setAttribute('data-empty','')">` : ""}
+        <div class="heroScrim"></div>
+        <div class="heroInfo">
+          <div class="hwho">${v.paused ? "Paused &middot; " : "Watching &middot; "}${(v.user||"").toUpperCase()}</div>
+          <div class="htitle">${v.title||""}</div>
+          <div class="hsub">${v.sub||""}</div>
+          <div class="prog"><i style="width:${v.pct||0}%"></i></div>
+        </div>
+      </div>`;
+    return;
+  }
+
   const cells = all.map((v, i) => `
     <div class="stream">
       ${i === 0 && src

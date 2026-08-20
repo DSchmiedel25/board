@@ -59,18 +59,25 @@ def have_ffmpeg():
         return False
 
 
-def kind_of(blob, name=""):
+def kind_of(path, name=""):
     """Sniff the bytes rather than trusting the extension — phones hand over
-    .jpg files that are HEIC and .mov files that are MP4."""
-    if blob[:6] in GIF_MAGIC:
+    .jpg files that are HEIC and .mov files that are MP4.
+
+    Takes a path and reads only the handful of bytes needed for the magic
+    number, not the whole file — this used to take a full blob just to look
+    at its first 12 bytes, which mattered once uploads started arriving as
+    on-disk temp files rather than in-memory bytes (see save_video below)."""
+    with open(path, "rb") as f:
+        head = f.read(12)
+    if head[:6] in GIF_MAGIC:
         return "gif"
-    if blob[4:8] == b"ftyp":                    # MP4 / MOV / M4V family
+    if head[4:8] == b"ftyp":                    # MP4 / MOV / M4V family
         return "video"
-    if blob[:4] == b"\x1a\x45\xdf\xa3":         # Matroska / WebM
+    if head[:4] == b"\x1a\x45\xdf\xa3":         # Matroska / WebM
         return "video"
-    if blob[:3] == b"\xff\xd8\xff" or blob[:8] == b"\x89PNG\r\n\x1a\n":
+    if head[:3] == b"\xff\xd8\xff" or head[:8] == b"\x89PNG\r\n\x1a\n":
         return "still"
-    if blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "still"
     if name.lower().endswith((".heic", ".heif", ".webp", ".bmp", ".tif", ".tiff")):
         return "still"
@@ -102,45 +109,46 @@ def _run(args):
         raise RuntimeError(tail[-1] if tail else "ffmpeg failed")
 
 
-def save_still(blob, stem):
+def save_still(path, stem):
     from PIL import Image, ImageOps
-    import io
-    src = Image.open(io.BytesIO(blob))
+    src = Image.open(path)
     src = ImageOps.exif_transpose(src).convert("RGB")   # honour phone rotation
     if src.width > STILL_W:
         src = src.resize((STILL_W, round(src.height * STILL_W / src.width)),
                          Image.LANCZOS)
-    path = free_path(stem, ".jpg")
-    src.save(path, "JPEG", quality=STILL_Q, optimize=True, progressive=True)
-    return {"file": os.path.basename(path), "type": "still",
+    out = free_path(stem, ".jpg")
+    src.save(out, "JPEG", quality=STILL_Q, optimize=True, progressive=True)
+    return {"file": os.path.basename(out), "type": "still",
             "w": src.width, "h": src.height}
 
 
-def save_video(blob, stem, src_ext=".bin"):
+def save_video(path, stem, src_ext=".bin"):
+    """Transcode an already-on-disk upload to a wall-safe mp4.
+
+    Used to take a blob and write it straight back out to a fresh temp file
+    just so ffmpeg — a subprocess, which reads from disk or stdin, never
+    from a Python object — had a path to point at. The upload was already a
+    file on disk before it ever got here (control.py streams it there); this
+    now runs ffmpeg on that file directly instead of round-tripping it
+    through memory and a second copy on disk first. src_ext no longer means
+    anything since there's no intermediate file left to name — kept as a
+    parameter so callers don't need to change.
+    """
     if not have_ffmpeg():
         raise RuntimeError("ffmpeg not installed")
-    tmp = free_path(stem + "_src", src_ext)
-    with open(tmp, "wb") as f:
-        f.write(blob)
     out = free_path(stem, ".mp4")
-    try:
-        _run([
-            "ffmpeg", "-y", "-i", tmp,
-            "-t", str(VIDEO_MAX_SEC),
-            # -2 keeps width even, which H.264 requires; odd widths fail here
-            # rather than at playback, which is far harder to diagnose.
-            "-vf", "scale=-2:'min(%d,ih)'" % VIDEO_H,
-            "-an",                                  # no audio track at all
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-            "-pix_fmt", "yuv420p",                  # some players need this
-            "-movflags", "+faststart",              # play before fully read
-            out,
-        ])
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+    _run([
+        "ffmpeg", "-y", "-i", path,
+        "-t", str(VIDEO_MAX_SEC),
+        # -2 keeps width even, which H.264 requires; odd widths fail here
+        # rather than at playback, which is far harder to diagnose.
+        "-vf", "scale=-2:'min(%d,ih)'" % VIDEO_H,
+        "-an",                                  # no audio track at all
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+        "-pix_fmt", "yuv420p",                  # some players need this
+        "-movflags", "+faststart",              # play before fully read
+        out,
+    ])
     return {"file": os.path.basename(out), "type": "video",
             "dur": probe_duration(out)}
 
@@ -197,17 +205,25 @@ def adjust(fname, frame):
     return hit
 
 
-def add(name, blob):
-    """Process one upload into the wall gallery. Returns its index entry."""
+def add(name, path):
+    """Process one already-on-disk upload into the wall gallery. Returns its
+    index entry.
+
+    Takes a path rather than a bytes blob — control.py streams every upload
+    to a temp file in fixed-size chunks specifically so the whole thing is
+    never resident in memory at once, and passing a blob through here used
+    to undo that: it read the file straight back into RAM just to hand it
+    to functions (PIL, ffmpeg) that work directly from a path anyway.
+    """
     stem = stem_of(name)
-    kind = kind_of(blob, name)
+    kind = kind_of(path, name)
     if kind == "still":
-        item = save_still(blob, stem)
+        item = save_still(path, stem)
     elif kind == "gif":
-        item = save_video(blob, stem, ".gif")
+        item = save_video(path, stem, ".gif")
         item["from"] = "gif"
     else:
-        item = save_video(blob, stem, ".mp4")
+        item = save_video(path, stem, ".mp4")
     item["frame"] = dict(FRAME_DEFAULT)
     item["ts"] = int(time.time())
     item["name"] = name[:60]

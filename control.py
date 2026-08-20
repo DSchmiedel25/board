@@ -55,6 +55,17 @@ UPLOAD_TMP = os.path.join(DATA_DIR, "tmp")
 # 1080p lands around 150MB, so this is a real ceiling rather than a formality;
 # anything larger should be trimmed before it comes over the wire.
 MAX_UPLOAD = 200 * 1024 * 1024
+
+# Every POST route except /wall/add and /upload — the two that stream to
+# disk and validate against MAX_UPLOAD themselves right where they start
+# reading. Nothing else here should ever see more than a form field or a
+# single 64x64 cropped photo's worth of base64 (a few KB), so a
+# Content-Length claiming otherwise is refused before a single byte is
+# read, not after reading that many bytes into memory to find out. This is
+# the fix for /crop specifically having had no size check at all — a
+# request could set Content-Length to anything and self.rfile.read(n)
+# would try to honour it.
+MAX_SMALL_BODY = 4 * 1024 * 1024
 MAX_PHOTOS = 40
 
 SCREENS = [
@@ -243,32 +254,6 @@ def split_multipart_file(path, boundary):
     return out
 
 
-def parse_multipart(body, boundary):
-    """Pull uploaded files out of a multipart body.
-
-    Hand-rolled because Python 3.13 removed the cgi module, and pulling in a
-    dependency for one form would be silly on a box that has to keep working
-    unattended.
-    """
-    out = []
-    sep = b"--" + boundary.encode()
-    for chunk in body.split(sep):
-        head, marker, data = chunk.partition(b"\r\n\r\n")
-        if not marker:
-            continue
-        text = head.decode("utf-8", "replace")
-        if "filename=" not in text:
-            continue
-        name = text.split('filename="', 1)[-1].split('"', 1)[0]
-        if not name:
-            continue
-        if data.endswith(b"\r\n"):
-            data = data[:-2]           # the CRLF that precedes the next part
-        if data:
-            out.append((os.path.basename(name), data))
-    return out
-
-
 def photo_files():
     try:
         return sorted(f for f in os.listdir(PHOTO_DIR) if f.endswith(".png"))
@@ -276,18 +261,21 @@ def photo_files():
         return []
 
 
-def save_photo(name, blob):
+def save_photo(name, path):
     """Resize on upload, not on display.
 
     The board reads these inside its rotation loop, so they land as finished
     64x64 PNGs. A whole photo is fitted rather than centre-cropped — cropping
     a group shot to a square usually removes the people — and the gaps are
     filled with a blurred copy so the panel isn't letterboxed in black.
+
+    Takes a path rather than a blob, same reasoning as wallmedia.add(): PIL
+    opens directly from disk, so there was never a reason to read the whole
+    upload into a bytes object first.
     """
     from PIL import Image, ImageOps, ImageFilter, ImageEnhance
-    import io
 
-    src = Image.open(io.BytesIO(blob))
+    src = Image.open(path)
     src = ImageOps.exif_transpose(src).convert("RGB")   # honour phone rotation
 
     back = ImageOps.fit(src, (64, 64), Image.LANCZOS).filter(
@@ -940,6 +928,10 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         n = int(self.headers.get("Content-Length") or 0)
 
+        if path not in ("/wall/add", "/upload") and n > MAX_SMALL_BODY:
+            self._send(b'{"error":"too large"}', "application/json", 413)
+            return
+
         if path == "/wall/add":
             # Wall-resolution copy only. The Pixoo tile for this same photo
             # arrives separately from the crop editor, already finished.
@@ -954,8 +946,7 @@ class Handler(BaseHTTPRequestHandler):
                 parts = split_multipart_file(tmp, boundary)
                 for name, ppath in parts:
                     try:
-                        with open(ppath, "rb") as f:
-                            _wall.add(name, f.read())
+                        _wall.add(name, ppath)
                         done += 1
                     except Exception:
                         pass
@@ -1036,27 +1027,51 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/upload":
+            # This used to be the one upload route that never got the fix
+            # documented on stream_to_disk() — `body = self.rfile.read(n)`
+            # followed by parse_multipart()'s `body.split(sep)`, the exact
+            # "peak around 2.5x the file" pattern that made a 150MB phone
+            # video cost most of 400MB on a Pi that's also running Jellyfin.
+            # This is the form on the control panel's own home page, so it
+            # was also the most-used one. Same streaming approach as
+            # /wall/add now: chunked to a temp file, split on disk, and
+            # every downstream function (kind_of, save_photo, wall.add)
+            # takes that file's path rather than its bytes.
             ctype = self.headers.get("Content-Type", "")
             if n > MAX_UPLOAD or "boundary=" not in ctype:
                 self._page("Upload too large or malformed")
                 return
-            body = self.rfile.read(n)
             boundary = ctype.split("boundary=", 1)[1].strip().strip('"')
-            done, failed = 0, 0
-            for name, blob in parse_multipart(body, boundary):
-                if len(photo_files()) >= MAX_PHOTOS:
-                    break
-                try:
-                    # Stills feed both devices. Clips are wall-only: there is
-                    # nothing sensible to do with 90 seconds of video on a
-                    # 64x64 panel that shows one frame per rotation.
-                    kind = _wall.kind_of(blob, name)
-                    if kind == "still":
-                        save_photo(name, blob)
-                    _wall.add(name, blob)
-                    done += 1
-                except Exception:
-                    failed += 1          # a bad file shouldn't lose the rest
+            done, failed, tmp, parts = 0, 0, None, []
+            try:
+                tmp, _got = stream_to_disk(self.rfile, n, UPLOAD_TMP)
+                parts = split_multipart_file(tmp, boundary)
+                for name, ppath in parts:
+                    if len(photo_files()) >= MAX_PHOTOS:
+                        break
+                    try:
+                        # Stills feed both devices. Clips are wall-only:
+                        # there is nothing sensible to do with 90 seconds of
+                        # video on a 64x64 panel that shows one frame per
+                        # rotation.
+                        kind = _wall.kind_of(ppath, name)
+                        if kind == "still":
+                            save_photo(name, ppath)
+                        _wall.add(name, ppath)
+                        done += 1
+                    except Exception:
+                        failed += 1      # a bad file shouldn't lose the rest
+            finally:
+                for _n, p in parts:
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+                if tmp:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
             self._page("Added %d photo%s%s" % (done, "" if done == 1 else "s",
                        ", %d failed" % failed if failed else ""))
             return

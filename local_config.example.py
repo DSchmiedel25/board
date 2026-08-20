@@ -48,3 +48,17 @@ NWS_CONTACT = "you@example.com"
 
 # LIFX bulb, if you run lifx_jf.py. Blank LIFX_IP leaves it off.
 LIFX_IP = ""
+
+# HomeKit. Generate HOMEKIT_TOKEN once with:
+#   python3 -c "import secrets; print(secrets.token_hex(16))"
+# and paste the same value into the Shortcut's request body. Anyone who
+# doesn't send it gets a 403.
+HOMEKIT_TOKEN = ""
+
+# Lights/switches read directly over HAP once paired (see README — pair with
+# `python3 -m aiohomekit`, then find aid/iid with `accessories -o compact`).
+# HOMEKIT_LIGHTS = [
+#     {"label": "Living Room", "aid": 5,  "iid": 10},
+#     {"label": "Office",      "aid": 12, "iid": 8},
+# ]
+HOMEKIT_LIGHTS = []

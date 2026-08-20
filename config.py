@@ -114,6 +114,17 @@ PIHOLE_HOST = ""
 PIHOLE_PASSWORD = ""
 PIHOLE_TOKEN = ""                     # v5 only
 
+# HomeKit. Two unrelated paths feed one card:
+#   - lights/switches are polled directly over HAP using a pairing made with
+#     aiohomekit (see homekit-pairings.json in DATA_DIR)
+#   - the HomePod temp/humidity sensors can't be reached that way — Apple
+#     doesn't expose them to any third-party controller — so a Shortcuts
+#     automation posts those readings to /homekit/reading instead.
+# HOMEKIT_TOKEN guards that endpoint. Leave it blank and the endpoint
+# refuses every post rather than silently accepting unauthenticated ones.
+HOMEKIT_TOKEN = ""
+HOMEKIT_LIGHTS = []                   # [{"label": "...", "aid": 5, "iid": 10}, ...]
+
 # System and network health.
 #
 # SYS_MOUNTS is what gets a fullness bar. "/" is the boot disk; add the media

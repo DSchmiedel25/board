@@ -24,9 +24,10 @@ from urllib.parse import parse_qsl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
-    from config import DATA_DIR
+    from config import DATA_DIR, HOMEKIT_TOKEN
 except ImportError:
     DATA_DIR = "/var/www/html/data"
+    HOMEKIT_TOKEN = ""
 
 # The wall board's grid lives in its own module: it has nothing to do with
 # the Pixoo rotation this file otherwise manages, and keeping the editor's
@@ -37,6 +38,13 @@ import wallpage as _wallpage
 
 PORT = 8081
 STATE = os.path.join(DATA_DIR, "screens.json")
+
+HOMEKIT_FILE = os.path.join(DATA_DIR, "homekit.json")
+# A reading older than this reads as stale rather than wrong — a HomePod
+# whose Shortcut stopped firing should say so, not freeze on the last number
+# it happened to send. Twice the intended post interval gives one missed run
+# some slack before the card admits anything.
+HOMEKIT_STALE_S = 60 * 60
 
 PHOTO_DIR = os.path.join(DATA_DIR, "photos")
 # Upload scratch. Deliberately beside the data rather than in /tmp, which on
@@ -106,6 +114,40 @@ def save(cfg):
         return ""
     except OSError as e:
         return "%s: %s" % (type(e).__name__, e)
+
+
+# ---------------------------------------------------------------- homekit
+
+def homekit_readings():
+    """Everything a Shortcut has ever posted, keyed by sensor id.
+
+    Read fresh on every request rather than cached in memory — this process
+    can go a long time between deploys, and a stale in-memory copy would mean
+    a restart is the only way a corrected reading ever shows up.
+    """
+    try:
+        with open(HOMEKIT_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_homekit_reading(sensor_id, label, temp_f, humidity):
+    """Merges one sensor's reading into the file rather than overwriting it.
+
+    Each HomePod's Shortcut posts on its own schedule, so a naive overwrite
+    would mean the last one to post is the only one that ever shows —
+    exactly what happened to the pihole card before it learned to keep
+    last-known-good per key instead of per file.
+    """
+    data = homekit_readings()
+    data[sensor_id] = {"label": label, "temp_f": temp_f,
+                        "humidity": humidity, "ts": time.time()}
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = HOMEKIT_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, HOMEKIT_FILE)
 
 
 # ---------------------------------------------------------------- photos
@@ -879,6 +921,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/layout":
             self._send(_layout.page().encode())
             return
+        if path == "/homekit/reading":
+            # Same URL as the POST, GET instead — lets you confirm a
+            # Shortcut actually landed without digging into the Pi's
+            # filesystem over SSH.
+            self._send(json.dumps(homekit_readings()).encode(), "application/json")
+            return
         if path == "/frame.png":
             try:
                 with open(os.path.join(DATA_DIR, "frame.png"), "rb") as f:
@@ -942,6 +990,37 @@ class Handler(BaseHTTPRequestHandler):
             fname = os.path.basename(raw.split("f=", 1)[-1].split("&")[0])
             _wall.remove(fname)
             self._page("Removed from the wall gallery")
+            return
+
+        if path == "/homekit/reading":
+            # Fed by an iOS Shortcut, not a browser, so this answers plain
+            # JSON with real status codes rather than the HTML control panel
+            # every other route in here returns.
+            try:
+                d = json.loads(self.rfile.read(n).decode() or "{}")
+            except ValueError:
+                self._send(b'{"error":"bad json"}', "application/json", 400)
+                return
+            if not HOMEKIT_TOKEN or d.get("token") != HOMEKIT_TOKEN:
+                self._send(b'{"error":"forbidden"}', "application/json", 403)
+                return
+            sensor_id = re.sub(r"[^a-z0-9_-]", "", str(d.get("id", "")).lower())
+            if not sensor_id:
+                self._send(b'{"error":"missing id"}', "application/json", 400)
+                return
+            try:
+                temp_f = float(d["temp_f"])
+            except (KeyError, TypeError, ValueError):
+                self._send(b'{"error":"missing temp_f"}', "application/json", 400)
+                return
+            humidity = d.get("humidity")
+            try:
+                humidity = float(humidity) if humidity is not None else None
+            except (TypeError, ValueError):
+                humidity = None
+            label = str(d.get("label") or sensor_id).strip()[:40]
+            save_homekit_reading(sensor_id, label, temp_f, humidity)
+            self._send(b'{"ok":true}', "application/json")
             return
 
         if path == "/layout/save":

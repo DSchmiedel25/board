@@ -73,8 +73,11 @@ MODULES = [
     ("services", "Services",    "Uptime Kuma health",                     3, 1, 12,  8,  2.0, 50.0),
     ("pihole",   "Pi-hole",     "Share of DNS blocked today, and traffic",4, 1, 12,  8,  3.0, 50.0),
     # Gallery is deliberately the loosest: framing is stored per image as a
-    # focal point and zoom, so it genuinely adapts to any shape.
-    ("gallery",  "Gallery",     "Photos, GIFs and clips you've uploaded", 3, 2, 12, 18,  0.20, 20.0),
+    # focal point and zoom, so it genuinely adapts to any shape. Aspect is
+    # bounded to 2:3-3:2 rather than left wide open — a slot shaped nothing
+    # like a photo or a phone video just means more of every image is
+    # letterboxed padding instead of picture.
+    ("gallery",  "Gallery",     "Photos, GIFs and clips you've uploaded", 3, 2, 12, 18,  0.6667, 1.5),
     # 2x2 is a real floor, not a courtesy: below that the hour and minute stop
     # fitting on one line and the thing reads as two numbers, not a time.
     ("clock",    "Clock",       "Time and date, ticking locally",         2, 2, 12, 10,  0.60, 12.0),
@@ -101,7 +104,7 @@ OPTS = {
         ("show", "Include", "multi",
          [("still", "Photos"), ("video", "Video & GIFs")], ["still", "video"]),
         ("fit", "Framing", "chips",
-         [("contain", "Whole image"), ("cover", "Fill slot")], "contain"),
+         [("contain", "Whole image"), ("cover", "Fill slot")], "cover"),
     ],
     "clock": [
         ("fmt", "Format", "chips",
@@ -558,10 +561,35 @@ function fitShape(w, h, mods){
 
 /* Why a given size was refused, in words. "Too wide" is meaningless without
    saying what it is too wide for. */
+/* Names whichever module(s) actually set the binding limit, so hitting a
+   wall reads as "Clock caps this at 5x4" instead of an unexplained refusal.
+   Width and height are judged separately — two modules can tie on one axis
+   (both maxed out at the grid's own ceiling of 12 wide, say) while only one
+   of them is the real reason the other axis is stuck. Merging the two axes
+   into one owner-set was the bug: it let an unrelated tie mask the actual
+   culprit. Only speaks up when an axis isn't unanimous — if every occupant
+   agrees there's nothing surprising to explain. */
+function limitNote(mods){
+  if(!mods || mods.length < 2) return "";
+  const [mw, mh] = slotMin(mods), [xw, xh] = slotMax(mods);
+  const owners = (table, idx, val) =>
+    mods.filter(k => table[k] && table[k][idx] === val).map(label);
+  const bits = [];
+  const collect = (verb, table, wv, hv) => {
+    const names = new Set();
+    owners(table, 0, wv).forEach(n => { if (owners(table,0,wv).length < mods.length) names.add(n); });
+    owners(table, 1, hv).forEach(n => { if (owners(table,1,hv).length < mods.length) names.add(n); });
+    if(names.size) bits.push(verb + " by " + [...names].join(", "));
+  };
+  collect("floor set", MINS, mw, mh);
+  collect("capped", MAXES, xw, xh);
+  return bits.length ? " \u2014 " + bits.join("; ") : "";
+}
+
 function shapeWhy(w, h, mods){
   const [mw, mh] = slotMin(mods), [xw, xh] = slotMax(mods);
-  if(w < mw || h < mh) return "needs at least " + mw + "\u00d7" + mh;
-  if(w > xw || h > xh) return "no bigger than " + xw + "\u00d7" + xh;
+  if(w < mw || h < mh) return "needs at least " + mw + "\u00d7" + mh + limitNote(mods);
+  if(w > xw || h > xh) return "no bigger than " + xw + "\u00d7" + xh + limitNote(mods);
   const [lo, hi] = slotAspect(mods);
   if(lo > hi) return "these modules want shapes that don't overlap";
   const r = ratio(w, h);
@@ -652,8 +680,9 @@ function buildSlots(){
                      if(!s.modules.length) return "";
                      /* Both ends, always, once anything is in the slot: seeing
                         only the floor is what makes a ceiling feel like a bug
-                        when you hit it. */
-                     return ` &middot; ${mw}×${mh} to ${xw}×${xh}`; })()}${
+                        when you hit it. limitNote names the culprit when the
+                        stack doesn't agree on the number. */
+                     return ` &middot; ${mw}×${mh} to ${xw}×${xh}${limitNote(s.modules)}`; })()}${
             (() => { const w = shapeWhy(s.w, s.h, s.modules);
                      return w ? ` &middot; <b class="warn">${w}</b>` : ""; })()}</div></div>
         <div class="modes" data-id="${s.id}">

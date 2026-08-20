@@ -60,7 +60,10 @@ LAYOUT = os.path.join(DATA_DIR, "layout.json")
 MODULES = [
     ("flag",     "Flag strip",  "Racing tonight, rained out, or standby", 4, 2, 12,  8,  3.0, 40.0),
     ("racing",   "Racing",      "3 dirt tracks and 3 NASCAR series",      4, 5, 12, 18,  0.55, 4.5),
-    ("weather",  "Weather",     "Now, three-day forecast and conditions", 3, 3, 12, 18,  0.40, 6.0),
+    # Min height is 5, not 3: below 5 rows (~260px) the three-day forecast
+    # hides itself, and below that a weather card that's just a temperature
+    # and a condition word doesn't answer the question it's there for.
+    ("weather",  "Weather",     "Now, three-day forecast and conditions", 3, 5, 12, 18,  0.40, 6.0),
     ("radar",    "Radar",       "Rain moving in, with the three tracks",  3, 3, 12, 18,  0.50, 6.0),
     ("wire",     "Wire",        "Headlines from your RSS feeds",          4, 1, 12,  6,  5.0, 50.0),
     # media's ceiling on height is the honest one: the card is flex-direction

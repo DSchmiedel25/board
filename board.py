@@ -1353,18 +1353,26 @@ def fetch():
     # of putting an invented "0% blocked" on the wall.
     if PIHOLE_HOST:
         import pihole as _pihole
-        ph = None
+        ph, err = None, ""
         try:
             ph = _pihole.build(PIHOLE_HOST, PIHOLE_PASSWORD, PIHOLE_TOKEN)
-        except Exception:
-            ph = None
+        except Exception as e:
+            ph, err = None, e
+        # Same _get() does for every other source — pihole.py talks to its
+        # own host over urllib rather than requests, so nothing else on this
+        # path was marking the panel. Without this the control page's
+        # Sources list simply omits pihole instead of showing it red, which
+        # reads as "not configured" when the real story is "not answering".
         if ph:
+            note_health("pihole", True)
             wx["pihole"] = ph
         elif cached and cached.get("pihole"):
+            note_health("pihole", False, err or "no answer, using cached")
             keep = dict(cached["pihole"])
             keep["stale"] = True
             wx["pihole"] = keep
         else:
+            note_health("pihole", False, err or "no answer")
             wx["pihole"] = {"offline": True}
 
     # System and network health. Purely local except for two pings, which

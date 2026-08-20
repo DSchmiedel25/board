@@ -313,9 +313,16 @@ body.no-media #media{display:none}
            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rrow .when{text-align:right;flex:none}
 .rrow .w1{font-size:clamp(11px,calc(4.2 * var(--u)),84px);font-weight:700;line-height:1.1}
+/* Was 2.29 * --u in a low-contrast tan (#c9bda9) — half the size of the day
+   label above it and dim enough to disappear from across a room, even
+   though DARK/GREEN is the actual answer to "is this track racing tonight".
+   Brought up near .sub's weight (2.5 * --u, --sodium) so it reads as
+   confidently as the day it's paired with. */
 .rrow .w2{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-          font-size:clamp(6px,calc(2.29 * var(--u)),46px);
-          letter-spacing:.14em;color:#c9bda9;text-transform:uppercase}
+          font-size:clamp(9px,calc(3.1 * var(--u)),58px);font-weight:700;
+          letter-spacing:.12em;color:var(--dust);text-transform:uppercase}
+.rrow.dark .w2{color:#c9bda9}
+.rrow.live .w2{color:var(--green)}
 .rrow.live .w1{color:var(--green);font-weight:800}
 .rrow.dark .nm{color:#a49b8d}
 .rrow .net{background:var(--sunk);color:var(--sodium);font-weight:800;

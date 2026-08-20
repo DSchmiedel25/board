@@ -42,7 +42,10 @@ a{color:var(--sodium)}
        touch-action:none}
 #frame .back{position:absolute;inset:0;background-size:cover;background-position:center;
              filter:blur(50px) saturate(1.8) brightness(.5);transform:scale(1.35)}
-#shot{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+/* .shotel: shared position/sizing for whichever of the two preview elements
+   is currently showing — exactly one of #shotImg/#shotVideo at a time,
+   picked by item type in applyFrame(). */
+.shotel{position:absolute;inset:0;width:100%;height:100%;z-index:1}
 #frame .hint{position:absolute;left:0;right:0;bottom:0;z-index:3;
              background:linear-gradient(transparent,#000b);color:#cfc8bb;
              font-size:12px;padding:16px 10px 7px;text-align:center}
@@ -109,7 +112,8 @@ h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--sodi
 
 <div id="frame">
   <div class="back" id="back"></div>
-  <img id="shot" alt="">
+  <img class="shotel" id="shotImg" alt="">
+  <video class="shotel" id="shotVideo" muted playsinline loop></video>
   <div class="thirds"></div>
   <div class="hint" id="hint">Drag to reposition</div>
 </div>
@@ -158,15 +162,52 @@ function paintStrip(){
    letterbox versus crop, object-position is the focal point, and scale is the
    zoom. Keeping the two identical is the only reason the preview is
    trustworthy. */
+/* Bug fix: this never set the preview element's src at all — framing
+   styles (object-fit, position, zoom) were applied to whatever the <img>
+   last happened to be showing, which on first load was nothing, so the
+   frame you were "editing" was blank or stale. It also assumed the preview
+   was always an <img>; a video/GIF item had no element that could show it.
+   Now there are two preview elements and applyFrame picks the one that
+   matches the current item's type, sets its src, and hides the other. */
 function applyFrame(){
-  const el = $("#shot"), it = cur();
-  if(!it) return;
+  const it = cur();
+  const img = $("#shotImg"), vid = $("#shotVideo");
+  if(!it){
+    // Audit item #8 in miniature: deleting down to zero items doesn't
+    // crash (pick(-1) short-circuits harmlessly through cur() returning
+    // undefined) but without this, the last-deleted photo or clip just
+    // sits there looking selected. Hide both and stop.
+    img.style.display = "none"; vid.style.display = "none"; vid.pause();
+    $("#back").style.backgroundImage = "none";
+    return;
+  }
+  const isVideo = it.type === "video";
+  const el = isVideo ? vid : img, other = isVideo ? img : vid;
+
+  other.style.display = "none";
+  if(!isVideo){ vid.pause(); vid.removeAttribute("src"); vid.load(); }
+  el.style.display = "";
+
   const fit = F.fit === "auto" ? "contain" : F.fit;
   el.style.objectFit = fit;
   el.style.objectPosition = F.x + "% " + F.y + "%";
   el.style.transform = "scale(" + F.zoom + ")";
   el.style.transformOrigin = F.x + "% " + F.y + "%";
-  $("#back").style.backgroundImage = `url("wall/${it.file}")`;
+
+  const src = "wall/" + it.file;
+  // Compare before assigning: setting .src on a <video> that's already
+  // showing that file restarts playback from frame zero on every drag/
+  // zoom tick, which is what a naive unconditional assignment would do.
+  if(el.getAttribute("src") !== src){
+    el.src = src;
+    if(isVideo) vid.play().catch(() => {});   // autoplay can be blocked before a user gesture; fine to stay paused
+  }
+
+  // Matches the live board: the blurred backdrop sits behind a letterboxed
+  // still only. Video has no equivalent there, and a video file can't be
+  // used as a CSS background-image regardless.
+  $("#back").style.backgroundImage = isVideo ? "none" : `url("${src}")`;
+
   $("#zv").textContent = F.zoom.toFixed(1) + "\u00d7";
   $("#zoom").value = Math.round(F.zoom * 100);
   document.querySelectorAll("#fit .chip").forEach(c =>

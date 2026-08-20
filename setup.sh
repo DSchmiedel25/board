@@ -70,6 +70,41 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable pixoo >/dev/null
 
+# ---------------------------------------------------------------- control
+#
+# This used to only exist as a static control.service file in the repo,
+# hand-written for one specific box — User=jellyfin,
+# WorkingDirectory=/home/jellyfin/board — rather than generated like
+# pixoo.service above. Cloning to any other username or path silently
+# never got a control panel: no upload form, no layout editor, no gallery
+# editor, and nothing to say why. Same treatment as pixoo.service now,
+# substituted from this box's actual user and path, and started
+# immediately rather than only enabled — pixoo doesn't need to be running
+# to check on it, but there is nothing useful to do with a control panel
+# that only starts after the next reboot.
+
+say "Installing control.service"
+sudo tee /etc/systemd/system/control.service >/dev/null <<EOF
+[Unit]
+Description=Board control panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$USER_NAME
+WorkingDirectory=$REPO
+ExecStart=/usr/bin/python3 $REPO/control.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now control >/dev/null
+
 # ---------------------------------------------------------------- kiosk
 
 if [ -n "${DISPLAY:-}" ] || [ -d "$HOME/.config" ] && command -v chromium-browser >/dev/null 2>&1; then
@@ -103,14 +138,16 @@ cat <<EOF
   Done.
 
   Wall dashboard   http://$(hostname).local/
+  Control panel    http://$(hostname).local:8081/
   Pixoo            sudo systemctl start pixoo
 
   Before the Pixoo will work, set PIXOO_IP in
   config.py, then:  git pull && sudo systemctl restart pixoo
 
   Check on things:
-    systemctl status pixoo
+    systemctl status pixoo control
     journalctl -u pixoo -f
+    journalctl -u control -f
     python3 board.py --screen weather
 ────────────────────────────────────────────────
 EOF

@@ -48,6 +48,16 @@ VIDEO_H = 720
 VIDEO_MAX_SEC = 90
 FFMPEG_TIMEOUT = 300           # a long clip on a Pi 4 is genuinely slow
 
+# Tried first, falls back to software automatically if it fails or produces
+# a suspect file — see the note on save_video(). Flip to False to skip it
+# and always use software encoding, if it turns out unreliable on your Pi.
+VIDEO_HW_ENCODE = True
+# h264_v4l2m2m doesn't support -crf (reported "private to the encoder" and
+# ignored) — bitrate is the only quality knob it actually obeys. 2.5Mbps is
+# a reasonable middle ground for 720p phone clips; raise it if the hardware
+# path looks noticeably worse than the software one at the same resolution.
+VIDEO_HW_BITRATE = "2500k"
+
 GIF_MAGIC = (b"GIF87a", b"GIF89a")
 
 
@@ -133,10 +143,48 @@ def save_video(path, stem, src_ext=".bin"):
     through memory and a second copy on disk first. src_ext no longer means
     anything since there's no intermediate file left to name — kept as a
     parameter so callers don't need to change.
+
+    Tries the Pi's hardware H.264 encoder first, falls back to software.
+    Software x264 on a Pi 4 that's also running Jellyfin is genuinely slow —
+    FFMPEG_TIMEOUT below is set to 5 minutes because a long clip can
+    actually take that. The hardware encoder (h264_v4l2m2m) is much
+    faster, but real-world reports of it are mixed: it doesn't honour
+    -crf (bitrate has to be set directly instead, which is a cruder quality
+    knob), and some sources report corrupted output at specific
+    resolutions. This was never tested against this box's actual hardware
+    — there's no way to: the encoder needs a real /dev/video* V4L2 device
+    that doesn't exist anywhere it could be tried ahead of time. So rather
+    than trust a clean ffmpeg exit code, the output gets sanity-checked —
+    near-zero duration means ffprobe couldn't find a real video stream in
+    it — and a bad result quietly falls through to the software path
+    instead of shipping something broken. Set VIDEO_HW_ENCODE = False to
+    skip the attempt entirely if it turns out unreliable on your Pi.
     """
     if not have_ffmpeg():
         raise RuntimeError("ffmpeg not installed")
     out = free_path(stem, ".mp4")
+
+    if VIDEO_HW_ENCODE:
+        try:
+            _run([
+                "ffmpeg", "-y", "-i", path,
+                "-t", str(VIDEO_MAX_SEC),
+                "-vf", "scale=-2:'min(%d,ih)',format=yuv420p" % VIDEO_H,
+                "-an",
+                "-c:v", "h264_v4l2m2m", "-b:v", VIDEO_HW_BITRATE,
+                "-movflags", "+faststart",
+                out,
+            ])
+            dur = probe_duration(out)
+            if dur > 0.5:
+                return {"file": os.path.basename(out), "type": "video", "dur": dur}
+        except Exception:
+            pass
+        try:
+            os.remove(out)          # clear a partial/corrupt attempt before the retry
+        except OSError:
+            pass
+
     _run([
         "ffmpeg", "-y", "-i", path,
         "-t", str(VIDEO_MAX_SEC),

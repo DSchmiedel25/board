@@ -732,28 +732,50 @@ _photo_at = [0]
 
 
 def photo_list():
-    """Uploaded photos, already sized to 64x64 by the control panel."""
+    """Uploaded photos, already sized to 64x64 by the control panel.
+
+    .gif entries are animated — screen_photo() returns a list of frames for
+    those instead of a single Image, and push() forwards a list straight to
+    push_frames() rather than push_image().
+    """
     try:
         d = os.path.join(DATA_DIR, PHOTO_DIR)
-        return sorted(f for f in os.listdir(d) if f.endswith(".png"))
+        return sorted(f for f in os.listdir(d)
+                       if f.endswith(".png") or f.endswith(".gif"))
     except OSError:
         return []
 
 
 def screen_photo(dirt, bath, wx, cal, phase=0):
-    """One uploaded photo, full bleed.
+    """One uploaded photo, full bleed — or one animated loop's frames.
 
-    The control panel does the resizing on upload, so this is a file read
-    rather than image work inside the display loop. Advances one photo each
-    time the screen comes round.
+    The control panel does the resizing (and, for animated uploads, the
+    frame extraction) on upload, so this is a file read rather than image
+    work inside the display loop. Advances one photo each time the screen
+    comes round.
     """
     shots = photo_list()
     img, d = canvas()
     if not shots:
         draw_centered(d, "NO PHOTOS", 28, SLATE, 1)
         return img
+    pick = shots[_photo_at[0] % len(shots)]
     try:
-        pick = shots[_photo_at[0] % len(shots)]
+        if pick.endswith(".gif"):
+            src = Image.open(os.path.join(DATA_DIR, PHOTO_DIR, pick))
+            # Read the encoded per-frame duration rather than assuming the
+            # 8fps this session's generator used — anything that ever lands
+            # in this folder some other way still plays at its own speed
+            # instead of silently wrong.
+            speed_ms = max(20, src.info.get("duration", 125))
+            frames = []
+            try:
+                while True:
+                    frames.append(src.convert("RGB").copy())
+                    src.seek(src.tell() + 1)
+            except EOFError:
+                pass
+            return (frames, speed_ms) if frames else img   # empty/unreadable gif falls through
         img.paste(Image.open(os.path.join(DATA_DIR, PHOTO_DIR, pick))
                   .convert("RGB"), (0, 0))
     except Exception:
@@ -1351,6 +1373,19 @@ def fetch():
     # Pi-hole. Blank PIHOLE_HOST drops it entirely — pihole.py returns None on
     # any failure rather than partial data, so last-known-good is kept instead
     # of putting an invented "0% blocked" on the wall.
+    #
+    # Bug fix: this used to fall back to the bare name `cached`, left over
+    # from the dirt/weather blocks above. Two problems with that, not one —
+    # `cached` is only assigned in *their* failure branches, so on the
+    # common night where dirt and weather both succeed, `cached` was never
+    # bound at all and this raised UnboundLocalError, taking the whole
+    # fetch() cycle down with it (not just the pihole card — nascar, radar
+    # and everything else queued after it in this function never ran
+    # either). And even on the rare occasion `cached` WAS bound, it held
+    # dirt's or weather's cache, which has no "pihole" key — so the
+    # fallback silently found nothing even when it didn't crash. Pi-hole
+    # gets its own remember()/recall() slot instead, the same as every
+    # other source in this function.
     if PIHOLE_HOST:
         import pihole as _pihole
         ph, err = None, ""
@@ -1365,15 +1400,18 @@ def fetch():
         # reads as "not configured" when the real story is "not answering".
         if ph:
             note_health("pihole", True)
+            remember("pihole", ph)
             wx["pihole"] = ph
-        elif cached and cached.get("pihole"):
-            note_health("pihole", False, err or "no answer, using cached")
-            keep = dict(cached["pihole"])
-            keep["stale"] = True
-            wx["pihole"] = keep
         else:
-            note_health("pihole", False, err or "no answer")
-            wx["pihole"] = {"offline": True}
+            pihole_cached, _pihole_state = recall("pihole")
+            if pihole_cached:
+                note_health("pihole", False, err or "no answer, using cached")
+                keep = dict(pihole_cached)
+                keep["stale"] = True
+                wx["pihole"] = keep
+            else:
+                note_health("pihole", False, err or "no answer")
+                wx["pihole"] = {"offline": True}
 
     # System and network health. Purely local except for two pings, which
     # sysnet rate-limits itself, so unlike the remote feeds there's no cached
@@ -1559,8 +1597,13 @@ def mirror(img):
 
 def push(dev, img, bright="auto"):
     dev.set_brightness(brightness_now(bright))
-    dev.push_image(img)
-    mirror(img)
+    if isinstance(img, tuple):
+        frames, speed_ms = img
+        dev.push_frames(frames, speed_ms)
+        mirror(frames[0])       # a static preview of a moving thing beats none
+    else:
+        dev.push_image(img)
+        mirror(img)
 
 
 def main():

@@ -18,6 +18,7 @@ import binascii
 import tempfile
 import json
 import os
+import subprocess
 import re
 import time
 from urllib.parse import parse_qsl
@@ -256,7 +257,8 @@ def split_multipart_file(path, boundary):
 
 def photo_files():
     try:
-        return sorted(f for f in os.listdir(PHOTO_DIR) if f.endswith(".png"))
+        return sorted(f for f in os.listdir(PHOTO_DIR)
+                       if f.endswith(".png") or f.endswith(".gif"))
     except OSError:
         return []
 
@@ -300,6 +302,59 @@ def save_photo(name, path):
 
     back.save(path, format="PNG")
     return path
+
+
+PIXOO_ANIM_FPS = 8
+PIXOO_ANIM_MAX_FRAMES = 60
+# The device's documented cap, not a guess (see pixoo_client.push_frames).
+# At a fixed watchable rate, that cap is a ceiling on *coverage*, not
+# smoothness — a 90-second clip doesn't get sampled thin across its whole
+# length (that's a slideshow, not what "plays smoothly" asked for); it gets
+# its first ~7.5 seconds at a real frame rate instead. Short GIFs usually
+# fit inside this untouched.
+PIXOO_ANIM_MAX_SEC = PIXOO_ANIM_MAX_FRAMES / PIXOO_ANIM_FPS
+
+
+def save_photo_anim(name, path):
+    """Build the Pixoo's animated counterpart to save_photo().
+
+    Stills get save_photo()'s fit-and-blur treatment because cropping a
+    posed group shot to a square usually removes someone. That treatment
+    is per-frame image compositing, though — fine once, not something to
+    run 60 times per upload — so animated content gets straightforward
+    cover-crop instead: scale to fill the 64x64 square, crop the overflow.
+    Standard for a GIF loop, and simple enough to do inside one ffmpeg
+    filter chain rather than a Python compositing pass per frame.
+
+    palettegen/paletteuse is the two-pass technique ffmpeg's own docs
+    recommend for GIF output — a plain scale+crop with no custom palette
+    looks noticeably banded at 64x64, since GIF's default palette handling
+    is built for photos, not a handful of colours across a few thousand
+    pixels.
+    """
+    if not _wall.have_ffmpeg():
+        raise RuntimeError("ffmpeg not installed")
+
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(name)[0])[:40] or "photo"
+    os.makedirs(PHOTO_DIR, exist_ok=True)
+    base = "%d_%s" % (time.time(), stem)
+    out = os.path.join(PHOTO_DIR, base + "_anim.gif")
+    n = 2
+    while os.path.exists(out):
+        out = os.path.join(PHOTO_DIR, "%s_anim_%d.gif" % (base, n))
+        n += 1
+
+    vf = ("fps=%d,scale=64:64:force_original_aspect_ratio=increase,"
+          "crop=64:64,split[s0][s1];[s0]palettegen=max_colors=64[p];"
+          "[s1][p]paletteuse" % PIXOO_ANIM_FPS)
+    subprocess.run([
+        "ffmpeg", "-y", "-i", path,
+        "-t", str(PIXOO_ANIM_MAX_SEC),
+        "-vf", vf,
+        "-loop", "0",
+        out,
+    ], capture_output=True, timeout=60, check=True)
+    return out
 
 
 def save_cropped(name, blob):
@@ -886,9 +941,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/photo/"):
             name = os.path.basename(path[len("/photo/"):])
+            ctype = "image/gif" if name.endswith(".gif") else "image/png"
             try:
                 with open(os.path.join(PHOTO_DIR, name), "rb") as f:
-                    self._send(f.read(), "image/png")
+                    self._send(f.read(), ctype)
             except OSError:
                 self.send_error(404)
             return
@@ -933,8 +989,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/wall/add":
-            # Wall-resolution copy only. The Pixoo tile for this same photo
-            # arrives separately from the crop editor, already finished.
+            # Wall-resolution copy. The Pixoo tile for a still photo arrives
+            # separately from the crop editor, already finished — a human
+            # chose that crop on purpose, and shouldn't have it silently
+            # replaced. Animated content has no equivalent editor step, so
+            # it gets its Pixoo loop generated automatically here instead.
             ctype = self.headers.get("Content-Type", "")
             if n > MAX_UPLOAD or "boundary=" not in ctype:
                 self._send(b'{"error":"too large"}', "application/json", 400)
@@ -947,6 +1006,11 @@ class Handler(BaseHTTPRequestHandler):
                 for name, ppath in parts:
                     try:
                         _wall.add(name, ppath)
+                        if _wall.kind_of(ppath, name) in ("gif", "video"):
+                            try:
+                                save_photo_anim(name, ppath)
+                            except Exception:
+                                pass   # wall upload above already succeeded
                         done += 1
                     except Exception:
                         pass
@@ -1050,13 +1114,20 @@ class Handler(BaseHTTPRequestHandler):
                     if len(photo_files()) >= MAX_PHOTOS:
                         break
                     try:
-                        # Stills feed both devices. Clips are wall-only:
-                        # there is nothing sensible to do with 90 seconds of
-                        # video on a 64x64 panel that shows one frame per
-                        # rotation.
+                        # Stills get the fitted/blurred Pixoo tile. Animated
+                        # content gets a decimated, palette-optimized GIF
+                        # loop instead — the device plays it back on its own
+                        # once pushed (see pixoo_client.push_frames and
+                        # board.py's screen_photo). Both kinds still get the
+                        # full wall-resolution copy either way.
                         kind = _wall.kind_of(ppath, name)
                         if kind == "still":
                             save_photo(name, ppath)
+                        elif kind in ("gif", "video"):
+                            try:
+                                save_photo_anim(name, ppath)
+                            except Exception:
+                                pass  # wall copy below still succeeds either way
                         _wall.add(name, ppath)
                         done += 1
                     except Exception:

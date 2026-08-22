@@ -29,6 +29,7 @@ never rotates in blank.
 
 import json
 import os
+import re
 import time
 
 try:
@@ -129,6 +130,35 @@ OPTS = {
          [("fade", "Cross-fade"), ("marquee", "Marquee")], "fade"),
     ],
 }
+
+# Applies to every module, on top of whatever's in OPTS above — this is the
+# knob for "the text stayed tiny even after I made the card huge" or the
+# opposite. --u (see index.html) already scales type to a card's actual
+# rendered size automatically; this multiplies on top of that per-module,
+# for the cases where the automatic curve still isn't what a specific card
+# at a specific size needs. 100 is the untouched default; the clamp() floors
+# and ceilings each module declares in index.html still apply underneath
+# it, so this shifts within that module's designed range rather than
+# escaping it entirely.
+UNIVERSAL_OPTS = [
+    ("scale", "Text size", "range", (70, 140), 100),
+    # Recolors the sodium-toned accents inside a module — headers, progress
+    # fills, badges — not the whole card. Excludes exactly two things on
+    # purpose: #cornerclock (the fallback widget when the clock module
+    # isn't in any slot at all — outside the module system entirely, has
+    # no opts to read) and the weather alert band, whose colour is tied to
+    # NWS severity rather than decoration; overriding it would make a
+    # Tornado Warning as visually calm as a Frost Advisory.
+    ("accent", "Accent color", "color", None, "#e8b93f"),
+    # Row-to-row spacing — only meaningfully touches the six modules that
+    # actually have rows of repeated content (racing, wire, weather's
+    # forecast, system/net's stat lines, pihole, services, and media's
+    # multi-viewer strip). Applies everywhere for the same reason scale
+    # does: a module without rows just won't visibly respond to it, which
+    # is simpler and more predictable than a UI where some modules
+    # mysteriously lack a control the rest have.
+    ("rowgap", "Row spacing", "range", (50, 200), 100),
+]
 
 # Floor for a slot holding nothing yet.
 SLOT_MIN = (3, 1)
@@ -261,7 +291,7 @@ def boxes_overlap(a, b):
 
 def clean_opts(key, got):
     out = {}
-    for name, _label, kind, spec, default in OPTS.get(key, []):
+    for name, _label, kind, spec, default in UNIVERSAL_OPTS + OPTS.get(key, []):
         v = got.get(name, default)
         if kind == "range":
             out[name] = clamp(v, spec[0], spec[1])
@@ -273,6 +303,14 @@ def clean_opts(key, got):
             picked = [x for x in (v if isinstance(v, list) else []) if x in allowed]
             # Empty means a module with nothing to show, which reads as broken.
             out[name] = picked or list(default)
+        elif kind == "color":
+            # #rrggbb only. A posted value could be anything — this isn't a
+            # trust boundary in the security sense (only this box's own
+            # editor ever posts here), but a malformed value would land
+            # straight in a CSS custom property and silently do nothing
+            # instead of showing an error, which is a worse failure mode
+            # than just falling back to the default.
+            out[name] = v if isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v) else default
     return out
 
 
@@ -332,8 +370,12 @@ def sanitize(doc):
     slots = [s for s in slots if s["modules"]]
 
     off = [k for k in KEYS if k not in seen_mod]
+    # Every module, not just the ones with entries in OPTS — that used to
+    # mean 9 of 12 modules had no saved opts at all, which was fine while
+    # OPTS was the only thing that lived there, but UNIVERSAL_OPTS applies
+    # to everything, so everything needs a slot to save it in now.
     opts = {k: clean_opts(k, (doc.get("opts") or {}).get(k) or {})
-            for k in OPTS}
+            for k in KEYS}
     return {"slots": slots, "off": off, "opts": opts,
             "gap": clamp(doc.get("gap", 20), 0, 60), "ts": int(time.time())}
 
@@ -443,6 +485,19 @@ h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--sodi
 .slhead{display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--sunk)}
 .slhead .t{flex:1;min-width:0;font-weight:700;font-size:15px}
 .slhead .d{font-size:11.5px;color:var(--slate);font-weight:400}
+/* Exact-position editing, next to the drag handles rather than instead of
+   them — dragging is faster for a rough placement, typing is faster for
+   "no, exactly 4 wide" once the drag fight starts. Sized for a thumb: a
+   number input's native spinner arrows are the first thing to disappear at
+   a smaller size, and losing them on mobile — where dragging small grips
+   is the actual complaint this exists to answer — would defeat the point. */
+.dim{width:2.6em;background:var(--panel);border:1px solid var(--rail);
+     border-radius:5px;color:var(--dust);font:inherit;font-weight:700;
+     font-size:15px;text-align:center;padding:2px 0;
+     -moz-appearance:textfield}
+.dim:focus{outline:2px solid var(--sodium);outline-offset:1px}
+.dim.bad{border-color:var(--red);color:var(--red)}
+.dimx{color:var(--slate);font-weight:400;margin:0 1px}
 .modes{display:flex;gap:0;border:1px solid var(--rail);border-radius:7px;overflow:hidden}
 .modes span{padding:7px 10px;font-size:12px;background:var(--sunk)}
 .modes span.on{background:var(--sodium);color:#241c05;font-weight:700}
@@ -453,6 +508,13 @@ h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--sodi
       font-weight:600;touch-action:none}
 .chip.drag{opacity:.45}
 .chip .ord{font-family:ui-monospace,monospace;font-size:11px;color:var(--sodium)}
+/* Same removal moveMod() already does for a drag to Off, one tap away —
+   this editor already asks for a resize drag, a slot-move drag, and a
+   module drag; a fourth drag just to take something off the board is one
+   too many gestures for what should be the simplest action here. */
+.chip .rm{margin-left:auto;color:var(--slate);font-size:17px;line-height:1;
+          padding:2px 5px;border-radius:5px}
+.chip .rm:hover,.chip .rm:active{background:var(--rail);color:var(--red)}
 .chips.over{background:#241f14;outline:2px dashed var(--sodium);outline-offset:-6px}
 .empty{color:var(--slate);font-size:13px;padding:4px 2px}
 .dwell{padding:0 12px 12px;display:none}
@@ -507,6 +569,7 @@ input[type=range]{width:100%;accent-color:var(--sodium);height:30px}
 const COLS = {{COLS}}, ROWS = {{ROWS}};
 const MODULES = {{MODULES}};
 const OPTS = {{OPTS}};
+const UNIVERSAL_OPTS = {{UNIVERSAL_OPTS}};
 const SLOT_MIN = {{SLOT_MIN}};
 const SLOT_MAX = {{SLOT_MAX}};
 const MINS = {{MINS}};
@@ -681,7 +744,19 @@ function buildSlots(){
   $("#slots").innerHTML = L.slots.map(s => `
     <div class="sl ${sel===s.id?"sel":""}" data-mode="${s.mode}" data-id="${s.id}">
       <div class="slhead">
-        <div class="t">${s.w}&times;${s.h} at ${s.col},${s.row}
+        <div class="t">
+          ${(() => { const [smw,smh] = slotMin(s.modules), [sxw,sxh] = slotMax(s.modules); return `
+          <input type="number" class="dim" inputmode="numeric" data-slot="${s.id}" data-field="w"
+                 min="${smw}" max="${sxw}" value="${s.w}">
+          <span class="dimx">&times;</span>
+          <input type="number" class="dim" inputmode="numeric" data-slot="${s.id}" data-field="h"
+                 min="${smh}" max="${sxh}" value="${s.h}">
+          <span class="dimx">at</span>
+          <input type="number" class="dim" inputmode="numeric" data-slot="${s.id}" data-field="col"
+                 min="1" max="${COLS}" value="${s.col}">
+          <span class="dimx">,</span>
+          <input type="number" class="dim" inputmode="numeric" data-slot="${s.id}" data-field="row"
+                 min="1" max="${ROWS}" value="${s.row}">`; })()}
           <div class="d">${s.modules.length} module${s.modules.length===1?"":"s"}${
             (() => { const [mw,mh] = slotMin(s.modules), [xw,xh] = slotMax(s.modules);
                      if(!s.modules.length) return "";
@@ -701,7 +776,7 @@ function buildSlots(){
       <div class="chips" data-slot="${s.id}">
         ${s.modules.length
           ? s.modules.map((k,i) => `<div class="chip" draggable="true" data-mod="${k}">
-              ${s.mode!=="rotate" ? `<span class="ord">${i+1}</span>` : ""}${label(k)}</div>`).join("")
+              ${s.mode!=="rotate" ? `<span class="ord">${i+1}</span>` : ""}${label(k)}<span class="rm" data-rm="${k}" title="Remove">&times;</span></div>`).join("")
           : `<div class="empty">Drag a module here</div>`}
       </div>
       <div class="dwell">
@@ -715,16 +790,23 @@ function buildSlots(){
 }
 
 function buildOpts(){
-  const withOpts = [...L.slots.flatMap(s => s.modules)].filter(k => OPTS[k]);
-  $("#optshead").style.display = withOpts.length ? "" : "none";
-  $("#opts").innerHTML = withOpts.map(k => {
+  // Every module placed in a slot gets a section now, not just the three
+  // that happen to have entries in OPTS — UNIVERSAL_OPTS (currently just
+  // Text size) applies to all twelve, so there's no longer a module with
+  // truly nothing to show here.
+  const shown = [...new Set(L.slots.flatMap(s => s.modules))];
+  $("#optshead").style.display = shown.length ? "" : "none";
+  $("#opts").innerHTML = shown.map(k => {
     const o = (L.opts && L.opts[k]) || {};
-    const rows = OPTS[k].map(([name, lab, kind, spec, dflt]) => {
+    const rows = UNIVERSAL_OPTS.concat(OPTS[k] || []).map(([name, lab, kind, spec, dflt]) => {
       const v = (name in o) ? o[name] : dflt;
       if(kind === "range")
         return `<div class="opt"><div class="lb"><span>${lab}</span><b>${v}</b></div>
           <input type="range" min="${spec[0]}" max="${spec[1]}" value="${v}"
                  data-mod="${k}" data-opt="${name}"></div>`;
+      if(kind === "color")
+        return `<div class="opt"><div class="lb"><span>${lab}</span></div>
+          <input type="color" value="${v}" data-mod="${k}" data-opt="${name}" data-color="1"></div>`;
       const cur = kind === "multi" ? (Array.isArray(v)?v:[]) : [v];
       return `<div class="opt"><div class="lb"><span>${lab}</span></div>
         <div class="ochips">${spec.map(([val,l2]) =>
@@ -1070,6 +1152,8 @@ document.addEventListener("pointerup", e => {
 
 /* ---------------------------------------------------------------- controls */
 $("#slots").addEventListener("click", e => {
+  const rm = e.target.closest(".rm");
+  if(rm){ moveMod(rm.dataset.rm, "__off__"); return; }
   const m = e.target.closest(".modes span");
   if(m){
     const s = slotOf(e.target.closest(".modes").dataset.id);
@@ -1089,13 +1173,66 @@ $("#slots").addEventListener("input", e => {
   touch();
 });
 
+/* Typed col/row/w/h. "change" rather than "input" — a number field fires
+   input after every keystroke, so typing "12" would apply "1" first and
+   fight the cursor. Runs through the exact same fitShape()/clamp logic as
+   a drag, so a typed value is bound by the same module rules a drag would
+   enforce — this is a more precise way to set a size within the rules, not
+   a way around them. Resizing keeps the top-left corner anchored (typing
+   doesn't have a "corner you're holding" the way a drag does); moving
+   keeps the current size and just clamps to the grid, same as a drag-move. */
+$("#slots").addEventListener("change", e => {
+  const field = e.target.dataset.field;
+  const id = e.target.dataset.slot;
+  if(!field || !id) return;
+  const s = slotOf(id);
+  if(!s) return;
+  const before = {...s};
+  let v = parseInt(e.target.value, 10);
+  if(!Number.isFinite(v)){ e.target.value = before[field]; return; }
+
+  let pinned = "";
+  if(field === "w" || field === "h"){
+    const wantW = field === "w" ? v : s.w, wantH = field === "h" ? v : s.h;
+    const [fw, fh] = fitShape(wantW, wantH, s.modules);
+    s.w = fw; s.h = fh;
+    s.col = Math.max(1, Math.min(COLS - fw + 1, s.col));
+    s.row = Math.max(1, Math.min(ROWS - fh + 1, s.row));
+    if(fw !== wantW || fh !== wantH) pinned = shapeWhy(wantW, wantH, s.modules);
+  }else{
+    if(field === "col") s.col = Math.max(1, Math.min(COLS - s.w + 1, v));
+    if(field === "row") s.row = Math.max(1, Math.min(ROWS - s.h + 1, v));
+  }
+
+  if(collides(s)){
+    Object.assign(s, before);
+    mark("Slots can't overlap — reverted", "bad");
+  }else{
+    dirty = true;
+    // touch() unconditionally overwrites whatever mark() was just set with
+    // its own generic "Unsaved changes" — true of the original drag handler
+    // too, which is why a clamped drag never actually shows why. Setting
+    // dirty directly here instead of going through touch() is what lets the
+    // clamp explanation actually survive on screen.
+    mark(pinned || "Unsaved changes", pinned ? "warn" : "");
+  }
+  build();
+});
+
 $("#opts").addEventListener("input", e => {
   const k = e.target.dataset.mod, name = e.target.dataset.opt;
-  if(!k || !name || e.target.type !== "range") return;
-  L.opts[k] = L.opts[k] || {};
-  L.opts[k][name] = +e.target.value;
-  e.target.closest(".opt").querySelector("b").textContent = e.target.value;
-  touch();
+  if(!k || !name) return;
+  if(e.target.type === "range"){
+    L.opts[k] = L.opts[k] || {};
+    L.opts[k][name] = +e.target.value;
+    e.target.closest(".opt").querySelector("b").textContent = e.target.value;
+    touch();
+  }else if(e.target.type === "color"){
+    // No <b> readout to update here — the swatch itself is the readout.
+    L.opts[k] = L.opts[k] || {};
+    L.opts[k][name] = e.target.value;
+    touch();
+  }
 });
 $("#opts").addEventListener("click", e => {
   const c = e.target.closest(".ochip");
@@ -1242,6 +1379,7 @@ def page():
             .replace("{{ROWS}}", str(ROWS))
             .replace("{{MODULES}}", json.dumps([[m[0], m[1], m[2]] for m in MODULES]))
             .replace("{{OPTS}}", json.dumps(OPTS))
+            .replace("{{UNIVERSAL_OPTS}}", json.dumps(UNIVERSAL_OPTS))
             .replace("{{SLOT_MIN}}", json.dumps(list(SLOT_MIN)))
             .replace("{{MINS}}", json.dumps(MINS))
             .replace("{{MAXES}}", json.dumps(MAXES))

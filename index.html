@@ -101,17 +101,17 @@ body.no-media #media{display:none}
            font-size:clamp(26px,calc(48 * var(--u)),263px);font-weight:900;line-height:.84;
            letter-spacing:.005em;font-variant-numeric:tabular-nums}
 #clock .cm{font-size:.3em;font-weight:800;letter-spacing:.12em;
-           color:var(--sodium)}
+           color:var(--accent, var(--sodium))}
 #clock .cd{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
            font-size:clamp(7px,calc(10 * var(--u)),55px);letter-spacing:.22em;
-           color:var(--sodium);text-transform:uppercase;line-height:1.2}
+           color:var(--accent, var(--sodium));text-transform:uppercase;line-height:1.2}
 /* Seconds as a sweep rather than digits: readable at a glance from across the
    room, where two more numerals would not be. */
 #clock .csec{display:none;width:62%;height:max(2px,calc(1.4 * var(--u)));border-radius:99px;
              background:rgba(255,255,255,.13);overflow:hidden}
 #clock[data-secs="on"] .csec{display:block}
 #clock .csec i{display:block;height:100%;width:0;border-radius:99px;
-               background:var(--sodium);transition:width .28s linear}
+               background:var(--accent, var(--sodium));transition:width .28s linear}
 /* A fresh minute snaps back instead of sliding the whole way in reverse. */
 #clock[data-wrap="1"] .csec i{transition:none}
 #clock[data-date="off"] .cd{display:none}
@@ -144,25 +144,31 @@ body.no-media #media{display:none}
    the cq units here resolve in the descendant that uses them, where the
    nearest container is this card. Using --u on the card itself would resolve
    against the card's own ancestor instead, which is why nothing does. */
-#flag{--u:calc((1cqh + 0.0833cqi)/2)}
-#racing{--u:calc((1cqh + 0.5227cqi)/2)}
-#gallery{--u:calc((1cqh + 0.5227cqi)/2)}
-#weather{--u:calc((1cqh + 0.4320cqi)/2)}
-#radar{--u:calc((1cqh + 0.2793cqi)/2)}
-#wire{--u:calc((1cqh + 0.0520cqi)/2)}
-#media{--u:calc((1cqh + 0.0833cqi)/2)}
-#services{--u:calc((1cqh + 0.0833cqi)/2)}
-#pihole{--u:calc((1cqh + 0.0833cqi)/2)}
-#system{--u:calc((1cqh + 0.1685cqi)/2)}
-#net{--u:calc((1cqh + 0.1685cqi)/2)}
-#clock{--u:calc((1cqh + 0.3443cqi)/2)}
+/* var(--textScale,1): set per-module from L.opts[key].scale by applyLayout,
+   defaulting to 1 (untouched) for anything never explicitly adjusted. This
+   multiplies on top of the automatic cqh/cqi sizing rather than replacing
+   it — the formula still does the real work of matching type to a card's
+   actual rendered size; this is the manual correction on top of it for
+   whichever specific module still doesn't look right at a specific size. */
+#flag{--u:calc(var(--textScale,1) * (1cqh + 0.0833cqi)/2)}
+#racing{--u:calc(var(--textScale,1) * (1cqh + 0.5227cqi)/2)}
+#gallery{--u:calc(var(--textScale,1) * (1cqh + 0.5227cqi)/2)}
+#weather{--u:calc(var(--textScale,1) * (1cqh + 0.4320cqi)/2)}
+#radar{--u:calc(var(--textScale,1) * (1cqh + 0.2793cqi)/2)}
+#wire{--u:calc(var(--textScale,1) * (1cqh + 0.0520cqi)/2)}
+#media{--u:calc(var(--textScale,1) * (1cqh + 0.0833cqi)/2)}
+#services{--u:calc(var(--textScale,1) * (1cqh + 0.0833cqi)/2)}
+#pihole{--u:calc(var(--textScale,1) * (1cqh + 0.0833cqi)/2)}
+#system{--u:calc(var(--textScale,1) * (1cqh + 0.1685cqi)/2)}
+#net{--u:calc(var(--textScale,1) * (1cqh + 0.1685cqi)/2)}
+#clock{--u:calc(var(--textScale,1) * (1cqh + 0.3443cqi)/2)}
 
 /* ------------------------------------------------------- health cards
    Pi health and Network are the same shape because they answer the same kind
    of question: a word, then the reason, then the numbers behind it. Reading
    order is deliberate — from the doorway you get the word, from the sofa the
    reason, and you only walk over for the numbers. */
-#system .body, #net .body{gap:calc(var(--gap)*.45)}
+#system .body, #net .body{gap:calc(var(--gap)*.45 * var(--rowGap,1))}
 .hhead{display:flex;align-items:baseline;gap:.5em}
 .hdot{width:.62em;height:.62em;border-radius:50%;flex:0 0 auto;
       background:var(--slate);align-self:center}
@@ -189,7 +195,7 @@ body.no-media #media{display:none}
    read faster as a length than as a percentage. */
 .hbar{height:max(2px,calc(1.1 * var(--u)));border-radius:99px;margin-top:.28em;
       background:rgba(255,255,255,.12);overflow:hidden}
-.hbar i{display:block;height:100%;border-radius:99px;background:var(--sodium)}
+.hbar i{display:block;height:100%;border-radius:99px;background:var(--accent, var(--sodium))}
 .hstat.warn b{color:var(--yellow)}
 .hstat.warn .hbar i{background:var(--yellow)}
 .hstat.bad b{color:var(--red)}
@@ -265,7 +271,7 @@ body.no-media #media{display:none}
 #flag.racing{background:var(--green);color:#08240f}
 #flag.rained{background:var(--red);color:#2a0b0a}
 #flag.watch{background:var(--yellow);color:#2b2205}
-#flag.standby{background:var(--sunk);color:var(--sodium)}
+#flag.standby{background:var(--sunk);color:var(--accent, var(--sodium))}
 #flag.racing{color:#08210b}
 #flag.offline{background:var(--rail);color:var(--dust)}
 /* Two explicit flanks rather than a masked overlay — CSS mask sizing on a
@@ -298,7 +304,7 @@ body.no-media #media{display:none}
         letter-spacing:.2em;color:var(--slate);text-transform:uppercase;
         padding:.25em 0 .35em;display:flex;align-items:center;gap:.8em}
 .rgroup:before{content:"";flex:1;height:1px;background:var(--rail);order:2}
-.rrow{display:flex;align-items:center;gap:1em;padding:.32em 0;min-width:0}
+.rrow{display:flex;align-items:center;gap:1em;padding:calc(.32em * var(--rowGap,1)) 0;min-width:0}
 .rrow .bar{width:clamp(3px,calc(0.88 * var(--u)),9px);align-self:stretch;border-radius:99px;flex:none;
            background:var(--rail)}
 .rrow.live .bar{background:var(--green)}
@@ -309,7 +315,7 @@ body.no-media #media{display:none}
           line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rrow .sub{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
            font-size:clamp(6px,calc(2.5 * var(--u)),50px);
-           letter-spacing:.13em;color:var(--sodium);text-transform:uppercase;
+           letter-spacing:.13em;color:var(--accent, var(--sodium));text-transform:uppercase;
            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rrow .when{text-align:right;flex:none}
 .rrow .w1{font-size:clamp(11px,calc(4.2 * var(--u)),84px);font-weight:700;line-height:1.1}
@@ -325,7 +331,7 @@ body.no-media #media{display:none}
 .rrow.live .w2{color:var(--green)}
 .rrow.live .w1{color:var(--green);font-weight:800}
 .rrow.dark .nm{color:#a49b8d}
-.rrow .net{background:var(--sunk);color:var(--sodium);font-weight:800;
+.rrow .net{background:var(--sunk);color:var(--accent, var(--sodium));font-weight:800;
            border-radius:.4em;padding:.18em .5em;font-size:clamp(8px,calc(2.99 * var(--u)),60px);flex:none;
            min-width:3.2em;text-align:center}
 /* Fixed columns rather than `1fr` pushing the times to the far edge — across
@@ -366,7 +372,7 @@ body.no-media #media{display:none}
 .tempwrap{display:flex;align-items:baseline;gap:.08em}
 .wxdeg{font-size:clamp(16px,calc(13 * var(--u)),152px);font-weight:700;opacity:.7}
 .wxsub{margin-left:auto;text-align:right;font-size:.86em;line-height:1.7;color:#dbe6f7}
-.days{display:grid;grid-template-columns:repeat(3,1fr);gap:.6em;margin-top:auto;
+.days{display:grid;grid-template-columns:repeat(3,1fr);gap:calc(.6em * var(--rowGap,1));margin-top:auto;
       border-top:1px solid rgba(255,255,255,.28);padding-top:.7em}
 .day{text-align:center}
 .day .n{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
@@ -498,14 +504,14 @@ body.no-media #media{display:none}
    floating in it with dead gaps. */
 #wire{grid-column:1/span 12;grid-row:14/span 2}
 #wire > header{display:none}
-#wire .body{flex-direction:row;align-items:stretch;gap:var(--gap);
+#wire .body{flex-direction:row;align-items:stretch;gap:calc(var(--gap) * var(--rowGap,1));
             padding:calc(2 * var(--u)) var(--gap)}
 .wmark{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
        font-size:clamp(7px,calc(15.3 * var(--u)),52px);
        letter-spacing:.18em;text-transform:uppercase;color:var(--slate);
        flex:none;padding-right:var(--gap);border-right:1px solid var(--rail);
        display:flex;flex-direction:column;justify-content:center;gap:.35em}
-.wmark .wage{color:var(--sodium)}
+.wmark .wage{color:var(--accent, var(--sodium))}
 .wrap{flex:1;min-width:0;display:flex;flex-direction:column;
       justify-content:space-around;overflow:hidden}
 .wrow{display:flex;align-items:baseline;gap:1em;min-width:0;
@@ -513,7 +519,7 @@ body.no-media #media{display:none}
 .wrow.out{opacity:0}
 .wsrc{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
       font-size:clamp(8px,calc(14.3 * var(--u)),16px);
-      letter-spacing:.14em;color:var(--sodium);flex:0 0 74px;
+      letter-spacing:.14em;color:var(--accent, var(--sodium));flex:0 0 74px;
       text-align:right;text-transform:uppercase}
 /* One line, always. A headline that wraps to two pushes the row below it off
    the card, and the layout has no room to absorb that. */
@@ -562,7 +568,7 @@ body.no-media #media{display:none}
 #services{grid-column:1/span 12;grid-row:16/span 3;position:relative;overflow:hidden}
 /* .card sets display:flex, which outranks the hidden attribute's default */
 #services[hidden]{display:none}
-#services .body{flex-direction:row;align-items:center;gap:var(--gap)}
+#services .body{flex-direction:row;align-items:center;gap:calc(var(--gap) * var(--rowGap,1))}
 .shead{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
        font-size:clamp(7px,calc(9.57 * var(--u)),52px);
        letter-spacing:.18em;text-transform:uppercase;flex:none;
@@ -590,7 +596,7 @@ body.no-media #media{display:none}
    laid out as a strip: one big number, the counts, and a sparkline. */
 #pihole{grid-column:1/span 12;grid-row:16/span 3;position:relative;overflow:hidden}
 #pihole > header{display:none}
-#pihole .body{flex-direction:row;align-items:center;gap:var(--gap);
+#pihole .body{flex-direction:row;align-items:center;gap:calc(var(--gap) * var(--rowGap,1));
               padding:clamp(6px,calc(7.66 * var(--u)),20px) var(--gap)}
 .phpct{font-size:clamp(24px,calc(40.9 * var(--u)),224px);font-weight:900;line-height:.85;letter-spacing:-.01em;
        font-variant-numeric:tabular-nums;flex:none}
@@ -620,10 +626,10 @@ body.no-media #media{display:none}
          height:clamp(20px,calc(28.09 * var(--u)),74px);flex:none;
          width:clamp(90px,calc(121.4 * var(--u)),320px)}
 .phspark i{flex:1;background:var(--rail);border-radius:1px;min-height:2px}
-.phspark i b{display:block;width:100%;background:var(--sodium);border-radius:1px}
+.phspark i b{display:block;width:100%;background:var(--accent, var(--sodium));border-radius:1px}
 #pihole.off .phpct{color:var(--slate)}
 .phpause{color:var(--red);font-weight:800}
-.phstale{color:var(--sodium)}
+.phstale{color:var(--accent, var(--sodium))}
 
 #media{grid-column:1/span 12;grid-row:16/span 3;position:relative;overflow:hidden}
 /* No card header on the strip: at 152px tall it would eat half the space,
@@ -666,17 +672,17 @@ body.no-media #media{display:none}
              overflow:hidden;text-overflow:ellipsis;max-width:calc(416.6 * var(--u))}
 .meta .ep{grid-row:1;grid-column:2;color:#cbb9a6;font-size:.95em;letter-spacing:.02em;
           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.meta .who{grid-row:1;grid-column:3;color:var(--sodium);font-weight:700;
+.meta .who{grid-row:1;grid-column:3;color:var(--accent, var(--sodium));font-weight:700;
            letter-spacing:.06em;white-space:nowrap}
 .prog{grid-row:2;grid-column:1/4;height:clamp(4px,calc(5.11 * var(--u)),14px);
       border-radius:99px;background:var(--rail);
       margin-top:clamp(3px,calc(3.83 * var(--u)),10px)}
-.prog i{display:block;height:100%;border-radius:.25em;background:var(--sodium)}
+.prog i{display:block;height:100%;border-radius:.25em;background:var(--accent, var(--sodium))}
 .left{grid-row:3;grid-column:1/4;font-size:.78em;color:var(--slate);margin-top:3px}
 
 /* The strip is wide and short, so several watchers sit side by side as equal
    cells rather than one hero with the rest crammed into a sidebar. */
-.streams{display:flex;align-items:stretch;gap:var(--gap);flex:1;min-width:0}
+.streams{display:flex;align-items:stretch;gap:calc(var(--gap) * var(--rowGap,1));flex:1;min-width:0}
 /* stretch, not center: with centred children the row height is indefinite,
    so the poster's height:100% fell back to its natural 600px and swallowed
    half the strip. */
@@ -704,7 +710,7 @@ body.no-media #media{display:none}
       text-overflow:ellipsis}
 .swho{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
       font-size:clamp(6px,calc(8.94 * var(--u)),49px);
-      letter-spacing:.16em;color:var(--sodium)}
+      letter-spacing:.16em;color:var(--accent, var(--sodium))}
 .stream .prog{margin-top:clamp(2px,calc(3.19 * var(--u)),9px);height:clamp(3px,calc(4.47 * var(--u)),12px)}
 #media[data-n="2"] .stitle{font-size:clamp(12px,calc(16.6 * var(--u)),91px)}
 #media[data-n="3"] .stitle{font-size:clamp(9px,calc(13.4 * var(--u)),73px)}
@@ -736,7 +742,7 @@ body.no-media #media{display:none}
                  padding:var(--gap) calc(var(--gap)*1.2)}
 #media .hwho{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
             font-size:clamp(9px,calc(6.5 * var(--u)),56px);font-weight:800;
-            letter-spacing:.16em;color:var(--sodium);text-transform:uppercase;
+            letter-spacing:.16em;color:var(--accent, var(--sodium));text-transform:uppercase;
             margin-bottom:.4em}
 #media .htitle{font-size:clamp(16px,calc(15.3 * var(--u)),132px);font-weight:800;
                line-height:1.05;letter-spacing:.005em;text-transform:uppercase;
@@ -755,7 +761,7 @@ body.no-media #media{display:none}
 .down b{display:block;font-size:clamp(18px,calc(25.53 * var(--u)),140px);color:var(--dust);
         letter-spacing:.1em;margin-bottom:.25em}
 .pill{font-size:.68em;font-weight:800;letter-spacing:.14em;color:#1a1509;
-      background:var(--sodium);border-radius:.4em;padding:.2em .55em}
+      background:var(--accent, var(--sodium));border-radius:.4em;padding:.2em .55em}
 .card,#flag{animation:rise .6s cubic-bezier(.2,.7,.3,1) both}
 #flag{animation-delay:.02s}
 #racing{animation-delay:.10s} #weather{animation-delay:.16s}
@@ -1773,7 +1779,19 @@ function applyLayout(doc){
   // turns it off.
   ALL_MODULES.forEach(k => {
     const el = document.getElementById(k);
-    if(el) el.dataset.hide = "1";
+    if(!el) return;
+    el.dataset.hide = "1";
+    // Text size and accent color, independent of slot placement — applied
+    // here rather than only for modules currently in a slot, so both are
+    // already correct if one gets dragged into a slot later without a
+    // full page reload.
+    const pct = doc.opts?.[k]?.scale;
+    el.style.setProperty("--textScale", typeof pct === "number" ? pct / 100 : 1);
+    const rg = doc.opts?.[k]?.rowgap;
+    el.style.setProperty("--rowGap", typeof rg === "number" ? rg / 100 : 1);
+    const accent = doc.opts?.[k]?.accent;
+    if(accent) el.style.setProperty("--accent", accent);
+    else el.style.removeProperty("--accent");   // falls back to --sodium in CSS
   });
 
   slots = doc.slots;

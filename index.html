@@ -2079,14 +2079,149 @@ async function load(){
     $("#flagSub").textContent="No snapshot from the Pi";
   }
 }
-seedDrops(); paintSky(); buildBase(); load(); setInterval(load, POLL);
-armClock();   /* sets the interval and paints immediately */
-loadAlerts(); setInterval(loadAlerts, ALERT_POLL);
-setInterval(checkStale, 15000);
-loadLayout(); setInterval(loadLayout, LAYOUT_POLL);
-loadWire(); setInterval(loadWire, WIRE_POLL);
-wireTimer = setInterval(cycleWire, WIRE_HOLD);
-loadGallery(); setInterval(loadGallery, GALLERY_POLL);
+/* ---------------------------------------------------------- preview mode
+   Embedded by the layout editor in a small iframe, one per module, so
+   "what will this look like" never needs a save-and-reload — it's the
+   actual renderX() functions and the actual stylesheet, fed a fixed
+   representative sample rather than whatever the real world happens to be
+   doing right now. Real live data would mean an off-season preview shows
+   nothing for racing and a quiet night shows nothing for media, which
+   defeats the point of a sample: it needs to look the same at 3am as it
+   does at 7pm.
+
+   Two modules don't get a fixture:
+   - radar needs live map tiles and Leaflet geocoding, neither practical to
+     fake, and the size/color/spacing sliders don't meaningfully apply to a
+     map anyway.
+   - gallery uses whatever you've actually uploaded (same-origin fetch of
+     the real wall index) rather than a placeholder image, since "sample
+     photo" tells you nothing real about your own framing choices.
+   - clock needs no fixture at all — the real current time already is a
+     representative sample of itself. */
+const PREVIEW_MODULE = new URLSearchParams(location.search).get("preview");
+
+const PREVIEW_FIXTURES = {
+  flag: () => renderFlag({status:"OK", state:"racing", label:"Albany-Saratoga \u2014 Malta NY"}),
+
+  racing: () => {
+    renderFlag({status:"OK", state:"racing", label:"Albany-Saratoga \u2014 Malta NY"});
+    renderRacing(
+      {status:"OK", rows:[
+        {code:"AS",  when:"FRI", state:"racing", prob:5},
+        {code:"LV",  when:"SAT", state:"dark",    prob:43},
+        {code:"FON", when:"9/17", state:"dark",   prob:null},
+      ]},
+      {rows:[
+        {label:"CUP", venue:"New Hampshire", time:"3:00 PM", date:"SUN AUG 23", net:"USA", live:false},
+        {label:"XFN", venue:"Daytona",       time:"7:30 PM", date:"FRI AUG 28", net:"CW",  live:false},
+        {label:"TRK", venue:"New Hampshire", time:"1:30 PM", date:"SAT AUG 22", net:"FS1", live:true},
+      ]}
+    );
+  },
+
+  weather: () => {
+    renderWeather({
+      status:"OK", temp:71, feels:70, sky:"clear", wind:5, rain:5,
+      days:[["Fri",75,60],["Sat",76,61],["Sun",77,62]],
+    });
+    renderAlerts({ok:true, alerts:[{event:"Heat Advisory", ends:new Date(Date.now()+3*3600e3).toISOString()}]});
+  },
+
+  wire: () => {
+    const now = Date.now() / 1000;
+    wireItems = [
+      {source:"AP", title:"A Different Kind of Identity Theft", ts: now - 9*60},
+      {source:"EXAM", title:"Missouri judge rules in favor of Republicans in redistricting battle", ts: now - 27*60},
+      {source:"NR", title:"Sample third headline for row-count preview", ts: now - 52*60},
+    ];
+    wireStamp = now;
+    paintWire();
+  },
+
+  media: () => renderMedia({
+    playing:true, poster:"", title:"Interstellar", sub:"2014", user:"dave",
+    paused:false, pct:42,
+    all:[{title:"Interstellar", sub:"2014", user:"dave", paused:false, pct:42}],
+  }),
+
+  services: () => renderServices({
+    total:8, down:[],
+    rows:[
+      {name:"Jellyfin", up:true, uptime:99.98},
+      {name:"Pi-hole",  up:true, uptime:99.2},
+      {name:"BathroomReport", up:true, uptime:100},
+    ],
+  }),
+
+  pihole: () => renderPihole({
+    total:5000, blocked:1200, pct:24.0, enabled:true, top:"ads.example.com",
+    history: Array.from({length:24}, (_,i) => [200+Math.round(Math.sin(i/3)*80+80), 40+Math.round(Math.sin(i/3)*20+20)]),
+  }),
+
+  system: () => renderSystem({
+    level:"ok", notes:[], temp_c:52, cpu_pct:18, mem:{pct:41},
+    disks:[{mount:"/", free_gb:38, pct:62}], uptime_s: 9*86400 + 4*3600,
+  }),
+
+  net: () => renderNet({
+    level:"ok", notes:[],
+    net:{gw:{ms:2}, wan:{ms:24}, iface:"eth0", speed_mbps:1000,
+         rx_bps:4200000, tx_bps:610000, tailscale:{up:true, online:4, peers:6}},
+  }),
+};
+
+if(PREVIEW_MODULE){
+  document.body.dataset.preview = "1";
+  buildBase();
+  ALL_MODULES.forEach(k => {
+    const el = document.getElementById(k);
+    if(!el) return;
+    el.dataset.hide = (k === PREVIEW_MODULE) ? "" : "1";
+    if(k === PREVIEW_MODULE){
+      // Fill the whole 1920x1080 canvas rather than sitting at its small
+      // fallback position — fit() (below, existing) already scales that
+      // whole canvas down to whatever size the iframe embedding this
+      // actually is, so a module spanning it fully is what makes "big
+      // preview box" and "tiny preview box" both come out proportionally
+      // correct without any new scaling code. 12/18 matches the grid CSS
+      // sets up above (grid-template-columns/rows) — no JS constant for
+      // it exists in this file the way layout.py's editor has COLS/ROWS.
+      el.style.gridColumn = "1 / span 12";
+      el.style.gridRow = "1 / span 18";
+    }
+  });
+
+  if(PREVIEW_MODULE === "clock"){
+    armClock();
+  }else if(PREVIEW_MODULE === "gallery"){
+    loadGallery();               // real uploads, real origin — see note above
+  }else if(PREVIEW_FIXTURES[PREVIEW_MODULE]){
+    PREVIEW_FIXTURES[PREVIEW_MODULE]();
+  }
+  // radar and anything unrecognised: intentionally left showing whatever
+  // that card's own empty/no-data state already is.
+
+  window.addEventListener("message", e => {
+    if(!e.data || e.data.type !== "previewOpts") return;
+    const el = document.getElementById(PREVIEW_MODULE);
+    if(!el) return;
+    const o = e.data.opts || {};
+    el.style.setProperty("--textScale", typeof o.scale === "number" ? o.scale/100 : 1);
+    el.style.setProperty("--rowGap", typeof o.rowgap === "number" ? o.rowgap/100 : 1);
+    if(o.accent) el.style.setProperty("--accent", o.accent);
+    else el.style.removeProperty("--accent");
+  });
+  try{ parent.postMessage({type:"previewReady", module: PREVIEW_MODULE}, "*"); }catch(e){}
+}else{
+  seedDrops(); paintSky(); buildBase(); load(); setInterval(load, POLL);
+  armClock();   /* sets the interval and paints immediately */
+  loadAlerts(); setInterval(loadAlerts, ALERT_POLL);
+  setInterval(checkStale, 15000);
+  loadLayout(); setInterval(loadLayout, LAYOUT_POLL);
+  loadWire(); setInterval(loadWire, WIRE_POLL);
+  wireTimer = setInterval(cycleWire, WIRE_HOLD);
+  loadGallery(); setInterval(loadGallery, GALLERY_POLL);
+}
 </script>
 </body>
 </html>

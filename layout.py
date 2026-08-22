@@ -485,19 +485,6 @@ h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--sodi
 .slhead{display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--sunk)}
 .slhead .t{flex:1;min-width:0;font-weight:700;font-size:15px}
 .slhead .d{font-size:11.5px;color:var(--slate);font-weight:400}
-/* Exact-position editing, next to the drag handles rather than instead of
-   them — dragging is faster for a rough placement, typing is faster for
-   "no, exactly 4 wide" once the drag fight starts. Sized for a thumb: a
-   number input's native spinner arrows are the first thing to disappear at
-   a smaller size, and losing them on mobile — where dragging small grips
-   is the actual complaint this exists to answer — would defeat the point. */
-.dim{width:2.6em;background:var(--panel);border:1px solid var(--rail);
-     border-radius:5px;color:var(--dust);font:inherit;font-weight:700;
-     font-size:15px;text-align:center;padding:2px 0;
-     -moz-appearance:textfield}
-.dim:focus{outline:2px solid var(--sodium);outline-offset:1px}
-.dim.bad{border-color:var(--red);color:var(--red)}
-.dimx{color:var(--slate);font-weight:400;margin:0 1px}
 .modes{display:flex;gap:0;border:1px solid var(--rail);border-radius:7px;overflow:hidden}
 .modes span{padding:7px 10px;font-size:12px;background:var(--sunk)}
 .modes span.on{background:var(--sodium);color:#241c05;font-weight:700}
@@ -525,6 +512,19 @@ h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--sodi
 input[type=range]{width:100%;accent-color:var(--sodium);height:30px}
 #off{border-style:dashed}
 .opt{padding:12px;border-top:1px solid var(--rail)}
+/* The actual index.html, actual stylesheet, actual renderX() functions —
+   embedded rather than reimplemented, so a preview can't quietly drift
+   from what the real board would show the way a hand-copied mockup could.
+   16:9 always, regardless of the module's real slot shape: matching that
+   exactly would mean tracking each module's current aspect and resizing
+   the iframe to fit, for a benefit — pixel-perfect current-slot framing —
+   this doesn't promise. What it does promise is size, color and spacing,
+   the three things that prompted building this at all, and those read
+   correctly at any reasonable box shape. */
+.preview{aspect-ratio:16/9;background:#000;border-bottom:1px solid var(--rail);
+         overflow:hidden}
+.preview iframe{width:100%;height:100%;border:0;display:block;
+                 pointer-events:none}
 .opt .lb{display:flex;justify-content:space-between;font-size:13.5px;
          color:var(--slate);margin-bottom:8px}
 .opt .lb b{color:var(--dust)}
@@ -744,19 +744,7 @@ function buildSlots(){
   $("#slots").innerHTML = L.slots.map(s => `
     <div class="sl ${sel===s.id?"sel":""}" data-mode="${s.mode}" data-id="${s.id}">
       <div class="slhead">
-        <div class="t">
-          ${(() => { const [smw,smh] = slotMin(s.modules), [sxw,sxh] = slotMax(s.modules); return `
-          <input type="number" class="dim" inputmode="numeric" data-slot="${s.id}" data-field="w"
-                 min="${smw}" max="${sxw}" value="${s.w}">
-          <span class="dimx">&times;</span>
-          <input type="number" class="dim" inputmode="numeric" data-slot="${s.id}" data-field="h"
-                 min="${smh}" max="${sxh}" value="${s.h}">
-          <span class="dimx">at</span>
-          <input type="number" class="dim" inputmode="numeric" data-slot="${s.id}" data-field="col"
-                 min="1" max="${COLS}" value="${s.col}">
-          <span class="dimx">,</span>
-          <input type="number" class="dim" inputmode="numeric" data-slot="${s.id}" data-field="row"
-                 min="1" max="${ROWS}" value="${s.row}">`; })()}
+        <div class="t">${s.w}&times;${s.h} at ${s.col},${s.row}
           <div class="d">${s.modules.length} module${s.modules.length===1?"":"s"}${
             (() => { const [mw,mh] = slotMin(s.modules), [xw,xh] = slotMax(s.modules);
                      if(!s.modules.length) return "";
@@ -789,6 +777,43 @@ function buildSlots(){
     : `<div class="empty">Everything is on the board</div>`;
 }
 
+// Created once per module, on first need, then moved (never recreated) into
+// each rebuild's fresh placeholder div — appendChild relocates an existing
+// node rather than destroying it, so the iframe's live browsing context
+// (already past its previewReady handshake, already showing the fixture)
+// survives every buildOpts() rebuild instead of reloading from scratch on
+// every unrelated slider drag or slot resize.
+const previewFrames = {};
+
+// control.py serves this editor on its own port; the wall page the preview
+// needs to embed is nginx's, on the default port — cross-origin from here,
+// which is exactly what postMessage exists for.
+function previewSrc(k){
+  return location.protocol + "//" + location.hostname + "/?preview=" + encodeURIComponent(k);
+}
+
+function previewFrame(k){
+  if(previewFrames[k]) return previewFrames[k];
+  const f = document.createElement("iframe");
+  f.src = previewSrc(k);
+  f.loading = "lazy";
+  f.title = label(k) + " preview";
+  previewFrames[k] = f;
+  return f;
+}
+
+function sendPreviewOpts(k){
+  const f = previewFrames[k];
+  if(!f || !f.contentWindow) return;
+  const o = (L.opts && L.opts[k]) || {};
+  f.contentWindow.postMessage({type:"previewOpts", opts:o}, "*");
+}
+
+window.addEventListener("message", e => {
+  if(!e.data || e.data.type !== "previewReady") return;
+  sendPreviewOpts(e.data.module);
+});
+
 function buildOpts(){
   // Every module placed in a slot gets a section now, not just the three
   // that happen to have entries in OPTS — UNIVERSAL_OPTS (currently just
@@ -814,8 +839,14 @@ function buildOpts(){
                 data-${kind==="multi"?"multi":"opt"}="${name}" data-val="${val}">${l2}</div>`
         ).join("")}</div></div>`;
     }).join("");
-    return `<div class="sl"><div class="slhead"><div class="t">${label(k)}</div></div>${rows}</div>`;
+    return `<div class="sl"><div class="slhead"><div class="t">${label(k)}</div></div>
+      <div class="preview" data-mod="${k}"></div>${rows}</div>`;
   }).join("");
+  // The iframes themselves never go through innerHTML — see previewFrame().
+  shown.forEach(k => {
+    const slot = document.querySelector(`.preview[data-mod="${k}"]`);
+    if(slot) slot.appendChild(previewFrame(k));
+  });
 }
 
 /* ------------------------------------------------------------------ gaps
@@ -1173,52 +1204,6 @@ $("#slots").addEventListener("input", e => {
   touch();
 });
 
-/* Typed col/row/w/h. "change" rather than "input" — a number field fires
-   input after every keystroke, so typing "12" would apply "1" first and
-   fight the cursor. Runs through the exact same fitShape()/clamp logic as
-   a drag, so a typed value is bound by the same module rules a drag would
-   enforce — this is a more precise way to set a size within the rules, not
-   a way around them. Resizing keeps the top-left corner anchored (typing
-   doesn't have a "corner you're holding" the way a drag does); moving
-   keeps the current size and just clamps to the grid, same as a drag-move. */
-$("#slots").addEventListener("change", e => {
-  const field = e.target.dataset.field;
-  const id = e.target.dataset.slot;
-  if(!field || !id) return;
-  const s = slotOf(id);
-  if(!s) return;
-  const before = {...s};
-  let v = parseInt(e.target.value, 10);
-  if(!Number.isFinite(v)){ e.target.value = before[field]; return; }
-
-  let pinned = "";
-  if(field === "w" || field === "h"){
-    const wantW = field === "w" ? v : s.w, wantH = field === "h" ? v : s.h;
-    const [fw, fh] = fitShape(wantW, wantH, s.modules);
-    s.w = fw; s.h = fh;
-    s.col = Math.max(1, Math.min(COLS - fw + 1, s.col));
-    s.row = Math.max(1, Math.min(ROWS - fh + 1, s.row));
-    if(fw !== wantW || fh !== wantH) pinned = shapeWhy(wantW, wantH, s.modules);
-  }else{
-    if(field === "col") s.col = Math.max(1, Math.min(COLS - s.w + 1, v));
-    if(field === "row") s.row = Math.max(1, Math.min(ROWS - s.h + 1, v));
-  }
-
-  if(collides(s)){
-    Object.assign(s, before);
-    mark("Slots can't overlap — reverted", "bad");
-  }else{
-    dirty = true;
-    // touch() unconditionally overwrites whatever mark() was just set with
-    // its own generic "Unsaved changes" — true of the original drag handler
-    // too, which is why a clamped drag never actually shows why. Setting
-    // dirty directly here instead of going through touch() is what lets the
-    // clamp explanation actually survive on screen.
-    mark(pinned || "Unsaved changes", pinned ? "warn" : "");
-  }
-  build();
-});
-
 $("#opts").addEventListener("input", e => {
   const k = e.target.dataset.mod, name = e.target.dataset.opt;
   if(!k || !name) return;
@@ -1232,7 +1217,16 @@ $("#opts").addEventListener("input", e => {
     L.opts[k] = L.opts[k] || {};
     L.opts[k][name] = e.target.value;
     touch();
+  }else{
+    return;   // not one of the two kinds this handler knows how to save
   }
+  // Live, on every drag tick — not just once buildOpts() next happens to
+  // run for some unrelated reason. This only covers the universal knobs
+  // (scale/rowgap/accent); a module's own chip options (gallery's Fill
+  // slot, clock's 24-hour) aren't threaded into the fixture, so the
+  // preview won't react to those specifically — a real gap, not
+  // pretended away.
+  sendPreviewOpts(k);
 });
 $("#opts").addEventListener("click", e => {
   const c = e.target.closest(".ochip");

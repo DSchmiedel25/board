@@ -500,7 +500,8 @@ h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--sodi
    module drag; a fourth drag just to take something off the board is one
    too many gestures for what should be the simplest action here. */
 .chip .rm{margin-left:auto;color:var(--slate);font-size:17px;line-height:1;
-          padding:2px 5px;border-radius:5px}
+          padding:9px 11px;border-radius:5px;min-width:24px;min-height:24px;
+          display:inline-flex;align-items:center;justify-content:center}
 .chip .rm:hover,.chip .rm:active{background:var(--rail);color:var(--red)}
 .chips.over{background:#241f14;outline:2px dashed var(--sodium);outline-offset:-6px}
 .empty{color:var(--slate);font-size:13px;padding:4px 2px}
@@ -1154,6 +1155,15 @@ document.addEventListener("drop", e => {
 let tdrag = null;
 document.addEventListener("pointerdown", e => {
   if(e.pointerType === "mouse") return;
+  // A tap that starts on the × has to be excluded here, not just handled
+  // correctly by the click handler below — otherwise a tiny bit of touch
+  // jitter (real touchscreens rarely register a tap at exactly 0 movement)
+  // clears the 8px threshold this same drag path uses, and the whole chip
+  // starts a drag-and-drop-back-into-its-own-slot alongside the actual
+  // removal. Both fire, both call moveMod(), both push an undo snapshot —
+  // one tap ends up two undo-steps deep, for a button whose entire point
+  // was to be a single unambiguous action.
+  if(e.target.closest(".rm")) return;
   const c = e.target.closest(".chip");
   if(!c) return;
   tdrag = {key: c.dataset.mod, node: c, x: e.clientX, y: e.clientY, moved: false};

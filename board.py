@@ -21,6 +21,7 @@ most of the dwell time; the rest of the week it's mostly BathroomReport.
 
 import argparse
 import datetime as dt
+import io
 import math
 import random
 import json
@@ -783,6 +784,26 @@ def screen_photo(dirt, bath, wx, cal, phase=0):
     return img
 
 
+def screen_radar(dirt, bath, wx, cal, phase=0):
+    """The pre-composed radar loop, or a plain status card while there's
+    nothing to show yet.
+
+    All the actual work — tile fetch, mosaic, downsample, echo distance —
+    happens once per poll in fetch_radar_pixoo(), not here. This just reads
+    the result, matching screen_photo()'s pattern of returning a plain
+    Image for the single-frame case and (frames, speed_ms) for the
+    animated one, which push() already knows how to tell apart.
+    """
+    pr = wx.get("radar_pixoo")
+    if pr and pr.get("frames"):
+        return (pr["frames"], pr.get("speed_ms", 550))
+    img, d = canvas()
+    draw_bar(d, SLATE, "RADAR", DUST)
+    draw_centered(d, "WAITING ON", 30, SLATE, 1)
+    draw_centered(d, "FIRST FETCH", 40, SLATE, 1)
+    return img
+
+
 def screen_services(dirt, bath, wx, cal, phase=0):
     """Service health. Green bar and a count when everything answers; red bar
     naming what died when it doesn't — the failures are what you'd walk over
@@ -1088,6 +1109,7 @@ SCREENS = {
     "podium": screen_podium,
     "photo": screen_photo,
     "services": screen_services,
+    "radar": screen_radar,
 }
 
 
@@ -1368,6 +1390,13 @@ def fetch():
         wx["nascar"] = keep_podium(_nascar.build(raw_n, get=_get))
     if radar:
         wx["radar"] = radar
+        # The Pixoo's own composed frames, not the wall's frame-path list —
+        # gated inside fetch_radar_pixoo() itself, so this call is cheap
+        # (one settings() read) on every poll where the screen's off, and
+        # only does the real tile-fetching work when it's actually on.
+        pixoo_radar = fetch_radar_pixoo()
+        if pixoo_radar:
+            wx["radar_pixoo"] = pixoo_radar
     wx["services"] = svc or {"offline": True, "reason": "NO ANSWER"}
 
     # Pi-hole. Blank PIHOLE_HOST drops it entirely — pihole.py returns None on
@@ -1517,6 +1546,205 @@ def fetch_radar():
         "frames": [{"path": f.get("path"), "time": f.get("time")}
                    for f in past if f.get("path")],
     }
+
+
+# ---------------------------------------------------------------- pixoo radar
+#
+# Prototyped once already as radar_mock.py — three throwaway layouts judged
+# against synthetic data, "B" (full-bleed, furniture floated on a dimmed
+# scrim) picked as the winner. That file never became real: no live tile
+# fetch, no wiring into SCREENS. This is that follow-through, same design,
+# real data.
+#
+# Same Web Mercator projection index.html's own radar map already uses
+# (project() there, RZ=7) — ported rather than reinvented, so the Pixoo and
+# the wall agree on what "zoomed in this far" means.
+RADAR_TILE_Z = 7
+RADAR_TILE_PX = 256
+# Fewer than the wall's RADAR_FRAMES (10): each wall frame is one tile
+# fetch, each Pixoo frame can be up to four (see _radar_mosaic) since home
+# isn't guaranteed to fall near a tile's center. 6 frames covers the last
+# half hour at RainViewer's 10-minute cadence without multiplying that cost
+# past what a 64x64 loop justifies.
+PIXOO_RADAR_FRAMES = 6
+
+
+def _mercator_px(lat, lon, z):
+    """Lat/lon to Web Mercator world pixels at zoom z. Identical math to
+    project() in index.html — ported, not reinvented, so both displays
+    agree on where things are."""
+    n = 2 ** z
+    x = (lon + 180) / 360 * n
+    r = math.radians(lat)
+    y = (1 - math.log(math.tan(r) + 1 / math.cos(r)) / math.pi) / 2 * n
+    return x * RADAR_TILE_PX, y * RADAR_TILE_PX
+
+
+def _radar_mosaic(host, path, size):
+    """A `size`x`size` RGBA window centered on home, stitched from however
+    many RainViewer tiles that actually takes.
+
+    Home is essentially never centered in its own native tile — for this
+    board it lands 182px into a 256px tile horizontally and only 32px in
+    vertically, barely inside the top edge. Fetching just that one tile
+    would show 86km north of home and almost nothing south of it, which
+    defeats the actual point of a radar screen: seeing weather coming.
+    Fetching the 2x2 (sometimes fewer) neighborhood and cropping a properly
+    centered window out of it costs a few extra small HTTP calls in
+    exchange for not silently blinding one direction.
+    """
+    cx, cy = _mercator_px(LAT, LON, RADAR_TILE_Z)
+    half = size / 2
+    left, top = cx - half, cy - half
+    tx0, ty0 = int(left // RADAR_TILE_PX), int(top // RADAR_TILE_PX)
+    tx1 = int((left + size) // RADAR_TILE_PX)
+    ty1 = int((top + size) // RADAR_TILE_PX)
+
+    mosaic_w = (tx1 - tx0 + 1) * RADAR_TILE_PX
+    mosaic_h = (ty1 - ty0 + 1) * RADAR_TILE_PX
+    mosaic = Image.new("RGBA", (mosaic_w, mosaic_h), (0, 0, 0, 0))
+
+    for ty in range(ty0, ty1 + 1):
+        for tx in range(tx0, tx1 + 1):
+            url = f"{host}{path}/{RADAR_TILE_PX}/{RADAR_TILE_Z}/{tx}/{ty}/4/1_1.png"
+            try:
+                r = requests.get(url, timeout=6)
+                r.raise_for_status()
+                tile_img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+            except Exception:
+                continue    # a missing tile at the edge of coverage: leave it transparent
+            mosaic.paste(tile_img, ((tx - tx0) * RADAR_TILE_PX,
+                                     (ty - ty0) * RADAR_TILE_PX))
+
+    crop_left = int(left - tx0 * RADAR_TILE_PX)
+    crop_top = int(top - ty0 * RADAR_TILE_PX)
+    return mosaic.crop((crop_left, crop_top, crop_left + size, crop_top + size))
+
+
+def _radar_maxpool(src, ow, oh):
+    """Strongest pixel per block, not the average — averaging a bright cell
+    against mostly-transparent neighbors washes it down to nothing, which
+    is exactly the light-but-real echo a glance at this screen most needs
+    to catch. Ported from radar_mock.py's validated version unchanged."""
+    sw, sh = src.size
+    nx, ny = max(1, sw // ow), max(1, sh // oh)
+    px = src.load()
+    dst = Image.new("RGB", (ow, oh), (0, 0, 0))
+    dp = dst.load()
+    for oy in range(oh):
+        for ox in range(ow):
+            best, score = (0, 0, 0), -1
+            for yy in range(oy * ny, min((oy + 1) * ny, sh)):
+                for xx in range(ox * nx, min((ox + 1) * nx, sw)):
+                    r, g, b, a = px[xx, yy]
+                    s = a * (r + g + b)
+                    if s > score:
+                        score, best = s, (r, g, b) if a > 40 else (0, 0, 0)
+            dp[ox, oy] = best
+    return dst
+
+
+def _radar_home_pin(d, x, y):
+    """A white pixel vanishes into yellow echo, so it gets a dark moat —
+    found by having it disappear, in the original mockup session."""
+    d.rectangle([x - 2, y - 2, x + 2, y + 2], fill=(0, 0, 0))
+    d.rectangle([x - 1, y - 1, x + 1, y + 1], fill=(255, 255, 255))
+    d.point((x, y), fill=(0, 0, 0))
+
+
+def _radar_dim(img, amt):
+    return Image.blend(img, Image.new("RGB", img.size, (0, 0, 0)), 1 - amt)
+
+
+def _radar_nearest_echo(mosaic_rgba, size, km_per_px):
+    """Distance in miles to the nearest real echo pixel, and whether it
+    reads as heavy. Alpha, not a decoded dBZ color table: RainViewer's
+    scheme-4 hex values for this endpoint aren't documented anywhere I
+    found, but transparency reliably means "no precipitation here" on every
+    RainViewer tile regardless of which color scheme drew it — the same
+    signal _radar_maxpool already keys off (alpha > 40).
+
+    "Heavy" is a red/green channel comparison rather than a specific
+    threshold, for the same reason: red-dominant colors sit at the hot end
+    of every RainViewer ramp variant, green-dominant at the cool end, and
+    that ordering holds without needing the exact palette.
+    """
+    px = mosaic_rgba.load()
+    cx, cy = size // 2, size // 2
+    best_d2, best_rgb = None, None
+    for y in range(size):
+        for x in range(size):
+            r, g, b, a = px[x, y]
+            if a <= 40:
+                continue
+            d2 = (x - cx) ** 2 + (y - cy) ** 2
+            if best_d2 is None or d2 < best_d2:
+                best_d2, best_rgb = d2, (r, g, b)
+    if best_d2 is None:
+        return None
+    miles = (best_d2 ** 0.5) * km_per_px * 0.621371
+    r, g, _b = best_rgb
+    heavy = r > g + 20
+    return miles, heavy
+
+
+def _radar_compose(tile_rgb, label, bar_color, bar_text):
+    """Layout B, unchanged from the validated mockup: full-bleed radar, a
+    dimmed scrim top and bottom so the text reads over any echo color
+    underneath it, home pinned dead center."""
+    img = tile_rgb.copy()
+    d = ImageDraw.Draw(img)
+    img.paste(_radar_dim(img.crop((0, 0, 64, 11)), .30), (0, 0))
+    img.paste(_radar_dim(img.crop((0, 56, 64, 64)), .30), (0, 56))
+    d.line([0, 11, 63, 11], fill=bar_color)
+    draw_centered(d, bar_text, 3, bar_color, 1)
+    _radar_home_pin(d, 32, 32)
+    draw_centered(d, label, 58, DUST, 1)
+    return img
+
+
+def fetch_radar_pixoo():
+    """The Pixoo's own radar loop — separate from fetch_radar() above, which
+    only gathers frame paths for the wall's Leaflet map to fetch tiles for
+    itself. The Pixoo has no browser to do that; this fetches, crops, and
+    composes actual images here instead.
+
+    Gated on the radar screen actually being enabled: each frame can cost
+    up to four tile fetches (see _radar_mosaic), and there's no reason to
+    pay that on every poll cycle for a screen nobody's looking at.
+    """
+    allowed = settings().get("screens")
+    if allowed is not None and "radar" not in allowed:
+        return None
+
+    doc = fetch_radar()
+    if not doc or not doc.get("frames"):
+        return None
+
+    km_per_px = (156543.03392 * math.cos(math.radians(LAT))
+                 / (2 ** RADAR_TILE_Z) * (RADAR_TILE_PX / 64) / 1000)
+
+    frames, labels_ago = [], []
+    recent = doc["frames"][-PIXOO_RADAR_FRAMES:]
+    now = time.time()
+    for f in recent:
+        mosaic = _radar_mosaic(doc["host"], f["path"], RADAR_TILE_PX)
+        tile64 = _radar_maxpool(mosaic, 64, 64)
+        echo = _radar_nearest_echo(mosaic, RADAR_TILE_PX, km_per_px)
+        if echo is None:
+            bar_color, bar_text = GREEN, "CLEAR"
+        else:
+            miles, heavy = echo
+            bar_color = RED if heavy else YELLOW
+            bar_text = "RAIN %dMI" % round(miles) if miles >= 1 else "RAIN HERE"
+        mins_ago = round((now - f.get("time", now)) / 60)
+        label = "NOW" if mins_ago <= 1 else "-%dM" % mins_ago
+        frames.append(_radar_compose(tile64, label, bar_color, bar_text))
+        labels_ago.append(mins_ago)
+
+    if not frames:
+        return None
+    return {"frames": frames, "speed_ms": 550}
 
 
 def fetch_nascar():

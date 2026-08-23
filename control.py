@@ -74,6 +74,7 @@ SCREENS = [
     ("weather",  "Weather",     "Now and the three-day forecast"),
     ("nascar",   "NASCAR",      "Next race for Cup, Xfinity and Trucks"),
     ("podium",   "Race field",  "Starting grid or finishing order"),
+    ("radar",    "Radar",       "Rain tracking \u2014 home pinned"),
     ("photo",    "Photos",      "Your uploads, one per turn"),
     ("services", "Services",    "Uptime Kuma \u2014 red when something's down"),
     ("jellyfin", "Now playing", "Only while something is streaming"),
@@ -85,7 +86,7 @@ DWELL_MIN, DWELL_MAX = 4, 90
 # writes a value once you move it, so untouched screens keep following the
 # race-night / morning schedules.
 DWELL_HINT = {"flag": 14, "weather": 14, "nascar": 12, "podium": 10,
-              "photo": 12, "services": 10, "jellyfin": 18}
+              "radar": 10, "photo": 12, "services": 10, "jellyfin": 18}
 
 DEFAULTS = {"screens": {k: True for k in KEYS}, "pin": None,
             "brightness": "auto", "dwell": {}, "command": None,

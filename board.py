@@ -1189,14 +1189,14 @@ def rotation(now=None, dwell=None):
     """
     now = now or dt.datetime.now()
     if is_race_night(now):
-        plan = [("flag", 30), ("weather", 10), ("nascar", 8), ("photo", 8),
-                ("services", 7), ("jellyfin", 16)]
+        plan = [("flag", 30), ("weather", 10), ("nascar", 8), ("radar", 8),
+                ("photo", 8), ("services", 7), ("jellyfin", 16)]
     elif MORNING[0] <= now.hour < MORNING[1]:
         plan = [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8),
-                ("photo", 10), ("services", 8), ("jellyfin", 16)]
+                ("radar", 10), ("photo", 10), ("services", 8), ("jellyfin", 16)]
     else:
         plan = [("flag", 14), ("weather", 14), ("nascar", 12), ("podium", 10),
-                ("photo", 12), ("services", 10), ("jellyfin", 18)]
+                ("radar", 10), ("photo", 12), ("services", 10), ("jellyfin", 18)]
 
     # Clamped here as well as in settings(): rotation() is called directly
     # from --once and the preview, which never go through the settings file.

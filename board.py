@@ -1581,8 +1581,13 @@ def _mercator_px(lat, lon, z):
 
 
 def _radar_mosaic(host, path, size):
-    """A `size`x`size` RGBA window centered on home, stitched from however
-    many RainViewer tiles that actually takes.
+    """Two `size`x`size` windows centered on home, stitched from however
+    many tiles that takes: the CartoDB dark basemap (RGB, geography — same
+    tiles the wall's own radar map already uses) and the RainViewer radar
+    overlay (RGBA, rain only, transparent everywhere else — RainViewer
+    doesn't bake geography into these at all, they're designed to be
+    layered onto someone else's map, which the wall does and this
+    originally didn't).
 
     Home is essentially never centered in its own native tile — for this
     board it lands 182px into a 256px tile horizontally and only 32px in
@@ -1602,44 +1607,69 @@ def _radar_mosaic(host, path, size):
 
     mosaic_w = (tx1 - tx0 + 1) * RADAR_TILE_PX
     mosaic_h = (ty1 - ty0 + 1) * RADAR_TILE_PX
-    mosaic = Image.new("RGBA", (mosaic_w, mosaic_h), (0, 0, 0, 0))
+    # Solid, not transparent: this is the fallback the crop shows if a
+    # basemap tile fails to fetch, and a hole in a map reads as more
+    # obviously broken than a solid dark tile blending into the rest.
+    base_mosaic = Image.new("RGB", (mosaic_w, mosaic_h), (24, 24, 26))
+    radar_mosaic = Image.new("RGBA", (mosaic_w, mosaic_h), (0, 0, 0, 0))
 
     for ty in range(ty0, ty1 + 1):
         for tx in range(tx0, tx1 + 1):
-            url = f"{host}{path}/{RADAR_TILE_PX}/{RADAR_TILE_Z}/{tx}/{ty}/4/1_1.png"
+            xy = ((tx - tx0) * RADAR_TILE_PX, (ty - ty0) * RADAR_TILE_PX)
+            base_url = f"https://basemaps.cartocdn.com/dark_all/{RADAR_TILE_Z}/{tx}/{ty}.png"
             try:
-                r = requests.get(url, timeout=6)
+                r = requests.get(base_url, timeout=6)
                 r.raise_for_status()
-                tile_img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+                base_mosaic.paste(Image.open(io.BytesIO(r.content)).convert("RGB"), xy)
             except Exception:
-                continue    # a missing tile at the edge of coverage: leave it transparent
-            mosaic.paste(tile_img, ((tx - tx0) * RADAR_TILE_PX,
-                                     (ty - ty0) * RADAR_TILE_PX))
+                pass    # leaves this cell at the solid fallback color
+
+            radar_url = f"{host}{path}/{RADAR_TILE_PX}/{RADAR_TILE_Z}/{tx}/{ty}/4/1_1.png"
+            try:
+                r = requests.get(radar_url, timeout=6)
+                r.raise_for_status()
+                radar_mosaic.paste(Image.open(io.BytesIO(r.content)).convert("RGBA"), xy)
+            except Exception:
+                pass    # a missing tile at the edge of coverage: leave it transparent
 
     crop_left = int(left - tx0 * RADAR_TILE_PX)
     crop_top = int(top - ty0 * RADAR_TILE_PX)
-    return mosaic.crop((crop_left, crop_top, crop_left + size, crop_top + size))
+    box = (crop_left, crop_top, crop_left + size, crop_top + size)
+    return base_mosaic.crop(box), radar_mosaic.crop(box)
 
 
-def _radar_maxpool(src, ow, oh):
-    """Strongest pixel per block, not the average — averaging a bright cell
-    against mostly-transparent neighbors washes it down to nothing, which
-    is exactly the light-but-real echo a glance at this screen most needs
-    to catch. Ported from radar_mock.py's validated version unchanged."""
-    sw, sh = src.size
+def _radar_maxpool(base, radar, ow, oh):
+    """Strongest echo pixel per block where there's real rain, the basemap
+    otherwise — averaging a bright cell against mostly-transparent
+    neighbors washes it down to nothing, which is exactly the light-but-
+    real echo a glance at this screen most needs to catch. Falling back to
+    solid black here (the original version, before a basemap existed to
+    fall back to) is what made a quiet sky look like a dead screen instead
+    of a map with nothing on it."""
+    sw, sh = radar.size
     nx, ny = max(1, sw // ow), max(1, sh // oh)
-    px = src.load()
+    rpx, bpx = radar.load(), base.load()
     dst = Image.new("RGB", (ow, oh), (0, 0, 0))
     dp = dst.load()
     for oy in range(oh):
         for ox in range(ow):
-            best, score = (0, 0, 0), -1
+            best, score = None, -1
             for yy in range(oy * ny, min((oy + 1) * ny, sh)):
                 for xx in range(ox * nx, min((ox + 1) * nx, sw)):
-                    r, g, b, a = px[xx, yy]
+                    r, g, b, a = rpx[xx, yy]
+                    if a <= 40:
+                        continue
                     s = a * (r + g + b)
                     if s > score:
-                        score, best = s, (r, g, b) if a > 40 else (0, 0, 0)
+                        score, best = s, (r, g, b)
+            if best is None:
+                # No echo anywhere in this block: sample the basemap at its
+                # center rather than averaging the whole block — a 1px
+                # sample keeps faint road/label detail legible at 64x64,
+                # where averaging would blur it to uniform grey anyway.
+                cx = min(sw - 1, ox * nx + nx // 2)
+                cy = min(sh - 1, oy * ny + ny // 2)
+                best = bpx[cx, cy]
             dp[ox, oy] = best
     return dst
 
@@ -1728,9 +1758,9 @@ def fetch_radar_pixoo():
     recent = doc["frames"][-PIXOO_RADAR_FRAMES:]
     now = time.time()
     for f in recent:
-        mosaic = _radar_mosaic(doc["host"], f["path"], RADAR_TILE_PX)
-        tile64 = _radar_maxpool(mosaic, 64, 64)
-        echo = _radar_nearest_echo(mosaic, RADAR_TILE_PX, km_per_px)
+        base, radar_ov = _radar_mosaic(doc["host"], f["path"], RADAR_TILE_PX)
+        tile64 = _radar_maxpool(base, radar_ov, 64, 64)
+        echo = _radar_nearest_echo(radar_ov, RADAR_TILE_PX, km_per_px)
         if echo is None:
             bar_color, bar_text = GREEN, "CLEAR"
         else:

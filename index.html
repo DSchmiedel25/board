@@ -1829,6 +1829,7 @@ function applyLayout(doc){
     glApplyOpts(doc.opts.gallery);
     wireApplyOpts(doc.opts.wire);
     clockApplyOpts(doc.opts.clock);
+    radarApplyOpts(doc.opts.radar);
   }
   runSlots();
 }
@@ -1867,6 +1868,17 @@ function project(lat, lng, z){
 }
 
 let radarFrames = [], radarHost = "", radarPos = 0, radarBuilt = "";
+let radarShowTracks = true;
+
+function radarApplyOpts(o){
+  const want = !o || o.tracks !== "hide";
+  if(want === radarShowTracks) return;
+  radarShowTracks = want;
+  // A toggle change should be visible immediately, same as any other opts
+  // change — not wait for the next resize or poll to happen to rebuild
+  // the pins layer.
+  buildBase();
+}
 /* The radar used to be a fixed slice of the weather card. Now it is a module
    you can drag and resize, so the tile window has to be recomputed when the
    box changes shape — otherwise the map keeps the geometry it had when the
@@ -1922,16 +1934,18 @@ function buildBase(){
     }
 
   const pins = $("#radarPins"); pins.innerHTML = "";
-  TRACKS.forEach(([name, lat, lng, ink]) => {
-    const [px, py] = project(lat, lng, RZ);
-    const el = document.createElement("div");
-    el.className = "pin";
-    el.style.left = ((px - geo.ox) * RS) + "px";
-    el.style.top  = ((py - geo.oy) * RS) + "px";
-    el.style.background = ink;
-    el.innerHTML = `<b style="color:${ink}">${name.split("-")[0]}</b>`;
-    pins.appendChild(el);
-  });
+  if(radarShowTracks){
+    TRACKS.forEach(([name, lat, lng, ink]) => {
+      const [px, py] = project(lat, lng, RZ);
+      const el = document.createElement("div");
+      el.className = "pin";
+      el.style.left = ((px - geo.ox) * RS) + "px";
+      el.style.top  = ((py - geo.oy) * RS) + "px";
+      el.style.background = ink;
+      el.innerHTML = `<b style="color:${ink}">${name.split("-")[0]}</b>`;
+      pins.appendChild(el);
+    });
+  }
   return true;
 }
 

@@ -129,6 +129,10 @@ OPTS = {
         ("mode", "Motion", "chips",
          [("fade", "Cross-fade"), ("marquee", "Marquee")], "fade"),
     ],
+    "radar": [
+        ("tracks", "Track pins", "chips",
+         [("show", "Show"), ("hide", "Hide")], "show"),
+    ],
 }
 
 # Applies to every module, on top of whatever's in OPTS above — this is the

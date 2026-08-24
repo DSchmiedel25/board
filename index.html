@@ -49,7 +49,8 @@ body{
 }
 .mono{font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
 .eyebrow{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-         font-size:.6em;letter-spacing:.2em;text-transform:uppercase;
+         font-size:clamp(9px,calc(2.6 * var(--u)),18px);
+         letter-spacing:.2em;text-transform:uppercase;
          color:var(--slate);font-weight:400}
 
 /* ------------------------------------------------------------ structure */
@@ -246,9 +247,19 @@ body.no-media #media{display:none}
 .card{background:var(--panel);border-radius:var(--r);overflow:hidden;
       display:flex;flex-direction:column;min-height:0;
       container-type:size}
-.card > header{padding:.7em 1.1em;display:flex;align-items:baseline;gap:1em;
+/* Header chrome scales with its card like everything else does.
+   It used to be 1.7em of the 22px body font — a flat 37px title on every
+   card whatever size that card was, so Racing (569px tall) and Now playing
+   (a 157px strip) wore the identical banner while their contents differed
+   by a factor of four. That mismatch is most of what "the text sizes are
+   all over" describes: the body of each card tracked its slot and the
+   header sat frozen on top of it. */
+.card > header{padding:clamp(5px,calc(2.1 * var(--u)),16px)
+                       clamp(9px,calc(3.3 * var(--u)),26px);
+               display:flex;align-items:baseline;gap:1em;
                background:var(--sunk)}
-.card > header h2{font-size:1.7em;letter-spacing:.06em;font-weight:900;
+.card > header h2{font-size:clamp(16px,calc(6.2 * var(--u)),36px);
+                  letter-spacing:.06em;font-weight:900;
                   text-transform:uppercase}
 .card > header .right{margin-left:auto}
 .body{padding:var(--gap);display:flex;flex-direction:column;
@@ -350,9 +361,11 @@ body.no-media #media{display:none}
              text-transform:uppercase;line-height:1.05;white-space:nowrap;
              overflow:hidden;text-overflow:ellipsis}
 #wxAlert .til{margin-left:auto;font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-              font-size:15px;letter-spacing:.12em;text-transform:uppercase;
+              font-size:clamp(9px,calc(4.5 * var(--u)),26px);
+              letter-spacing:.12em;text-transform:uppercase;
               white-space:nowrap;opacity:.85}
-#wxAlert .more{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-size:15px;
+#wxAlert .more{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+               font-size:clamp(9px,calc(4.5 * var(--u)),26px);
                font-weight:800;background:rgba(0,0,0,.22);border-radius:.4em;
                padding:.1em .45em;flex:none}
 #wxAlert.severe{background:#d9534a;color:#2a0b0a}
@@ -371,14 +384,16 @@ body.no-media #media{display:none}
         letter-spacing:-.02em}
 .tempwrap{display:flex;align-items:baseline;gap:.08em}
 .wxdeg{font-size:clamp(16px,calc(13 * var(--u)),152px);font-weight:700;opacity:.7}
-.wxsub{margin-left:auto;text-align:right;font-size:.86em;line-height:1.7;color:#dbe6f7}
+.wxsub{margin-left:auto;text-align:right;line-height:1.7;color:#dbe6f7;
+       font-size:clamp(11px,calc(5.7 * var(--u)),34px)}
 .days{display:grid;grid-template-columns:repeat(3,1fr);gap:calc(.6em * var(--rowGap,1));margin-top:auto;
       border-top:1px solid rgba(255,255,255,.28);padding-top:.7em}
 .day{text-align:center}
 .day .n{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
-        font-size:.68em;color:#c3d4ec;letter-spacing:.18em}
+        font-size:clamp(9px,calc(4.5 * var(--u)),26px);
+        color:#c3d4ec;letter-spacing:.18em}
 .day .hi{font-size:clamp(16px,calc(12.5 * var(--u)),146px);font-weight:800;line-height:1.15}
-.day .lo{font-size:.86em;color:#b3c6e2}
+.day .lo{font-size:clamp(11px,calc(5.7 * var(--u)),34px);color:#b3c6e2}
 
 /* -------------------------------------------------------------- radar
    Fixed tiles rather than a mapping library: a wall panel never pans or
@@ -611,7 +626,10 @@ body.no-media #media{display:none}
 .phnums{display:flex;gap:calc(var(--gap)*1.3);flex:none}
 .phn .v{font-size:clamp(12px,calc(17.2 * var(--u)),94px);font-weight:800;
         font-variant-numeric:tabular-nums;line-height:1.05}
-.phn .k{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+/* .phtop .k is the same label in the same card — it was written inline in
+   the template at a flat 12.5px, which is what .phn .k happens to compute to
+   in the default strip and nowhere else. */
+.phn .k,.phtop .k{font-family:"DejaVu Sans Mono",ui-monospace,monospace;
         font-size:clamp(6px,calc(7.98 * var(--u)),44px);
         letter-spacing:.15em;color:var(--slate);text-transform:uppercase}
 .phtop{flex:1;min-width:0}
@@ -670,15 +688,18 @@ body.no-media #media{display:none}
    vw measures the browser window rather than the card, and the cap lands in
    the wrong place on any screen that is not exactly 1080p. */
              overflow:hidden;text-overflow:ellipsis;max-width:calc(416.6 * var(--u))}
-.meta .ep{grid-row:1;grid-column:2;color:#cbb9a6;font-size:.95em;letter-spacing:.02em;
+.meta .ep{grid-row:1;grid-column:2;color:#cbb9a6;letter-spacing:.02em;
+          font-size:clamp(10px,calc(13.3 * var(--u)),64px);
           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .meta .who{grid-row:1;grid-column:3;color:var(--accent, var(--sodium));font-weight:700;
+           font-size:clamp(10px,calc(14 * var(--u)),68px);
            letter-spacing:.06em;white-space:nowrap}
 .prog{grid-row:2;grid-column:1/4;height:clamp(4px,calc(5.11 * var(--u)),14px);
       border-radius:99px;background:var(--rail);
       margin-top:clamp(3px,calc(3.83 * var(--u)),10px)}
 .prog i{display:block;height:100%;border-radius:.25em;background:var(--accent, var(--sodium))}
-.left{grid-row:3;grid-column:1/4;font-size:.78em;color:var(--slate);margin-top:3px}
+.left{grid-row:3;grid-column:1/4;color:var(--slate);margin-top:3px;
+      font-size:clamp(9px,calc(11 * var(--u)),54px)}
 
 /* The strip is wide and short, so several watchers sit side by side as equal
    cells rather than one hero with the rest crammed into a sidebar. */
@@ -760,7 +781,8 @@ body.no-media #media{display:none}
 .down{flex:1;display:grid;place-items:center;text-align:center;color:var(--slate)}
 .down b{display:block;font-size:clamp(18px,calc(25.53 * var(--u)),140px);color:var(--dust);
         letter-spacing:.1em;margin-bottom:.25em}
-.pill{font-size:.68em;font-weight:800;letter-spacing:.14em;color:#1a1509;
+.pill{font-size:clamp(8px,calc(9.6 * var(--u)),46px);
+      font-weight:800;letter-spacing:.14em;color:#1a1509;
       background:var(--accent, var(--sodium));border-radius:.4em;padding:.2em .55em}
 .card,#flag{animation:rise .6s cubic-bezier(.2,.7,.3,1) both}
 #flag{animation-delay:.02s}
@@ -1422,8 +1444,7 @@ function renderPihole(ph){
     </div>
     ${spark}
     <div class="phtop">${ph.top
-      ? `<div class="k" style="font-family:'DejaVu Sans Mono',monospace;font-size:12.5px;
-           letter-spacing:.15em;color:var(--slate);text-transform:uppercase">Top blocked</div>
+      ? `<div class="k">Top blocked</div>
          <div class="d">${esc(ph.top)}</div>` : ""}</div>`;
 }
 

@@ -82,10 +82,17 @@ MODULES = [
     ("pihole",   "Pi-hole",     "Share of DNS blocked today, and traffic",4, 1, 12,  8,  3.0, 50.0),
     # Gallery is deliberately the loosest: framing is stored per image as a
     # focal point and zoom, so it genuinely adapts to any shape. Aspect is
-    # bounded to 2:3-3:2 rather than left wide open — a slot shaped nothing
-    # like a photo or a phone video just means more of every image is
-    # letterboxed padding instead of picture.
-    ("gallery",  "Gallery",     "Photos, GIFs and clips you've uploaded", 3, 2, 12, 18,  0.6667, 1.5),
+    # bounded rather than left wide open — a slot shaped nothing like a photo
+    # or a phone video just means more of every image is letterboxed padding
+    # instead of picture.
+    #
+    # The ceiling is 2.0, not 1.5. At 1.5 the shipped default layout did not
+    # survive its own sanitize(): the main slot holds Racing over Gallery, and
+    # 7x10 renders at 1.91:1, so fit_shape shrank it to 5 wide and left a 2x10
+    # hole in the middle of the wall on any fresh install or Reset. 1.91:1 is
+    # between 16:9 and 2:1 — an ordinary shape for a photo or a clip, and not
+    # one worth refusing.
+    ("gallery",  "Gallery",     "Photos, GIFs and clips you've uploaded", 3, 2, 12, 18,  0.6667, 2.0),
     # 2x2 is a real floor, not a courtesy: below that the hour and minute stop
     # fitting on one line and the thing reads as two numbers, not a time.
     ("clock",    "Clock",       "Time and date, ticking locally",         2, 2, 12, 10,  0.60, 12.0),
@@ -361,8 +368,16 @@ def sanitize(doc):
         ids.add(sid)
 
         mode = s.get("mode") if s.get("mode") in MODES else "single"
-        if len(mods) > 1 and mode == "single":
-            mode = "takeover"             # single with a list is meaningless
+        # Keep mode and occupancy in step in both directions. Going up was
+        # already handled; going down was not, so a slot you emptied back to
+        # one module kept a "rotate" the renderer ignores (it needs two) and
+        # a dwell slider that did nothing — the editor said one thing and the
+        # board did another.
+        if len(mods) > 1:
+            if mode == "single":
+                mode = "takeover"         # single with a list is meaningless
+        else:
+            mode = "single"
         slots.append({
             "id": sid, "mode": mode,
             "dwell": clamp(s.get("dwell", 20), DWELL_MIN, DWELL_MAX),
@@ -507,6 +522,19 @@ h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--sodi
           padding:9px 11px;border-radius:5px;min-width:24px;min-height:24px;
           display:inline-flex;align-items:center;justify-content:center}
 .chip .rm:hover,.chip .rm:active{background:var(--rail);color:var(--red)}
+/* Order is priority in single/takeover, so it has to be editable. Dropping a
+   chip back into its own slot used to be the only way to change it, and that
+   only ever sent it to the *end* — there was no way to promote anything. */
+.chip .up{margin-left:auto;color:var(--slate);font-size:12px;line-height:1;
+          padding:9px 10px;border-radius:5px;min-width:24px;min-height:24px;
+          display:inline-flex;align-items:center;justify-content:center}
+.chip .up + .rm{margin-left:0}
+.chip .up:hover,.chip .up:active{background:var(--rail);color:var(--sodium)}
+/* A slot holding one module has no mode to choose — showing three buttons
+   where two do exactly the same thing and the third needs a second module
+   was the bulk of "the mode buttons don't work". */
+.modes.solo{border-color:transparent}
+.modes.solo span{background:transparent;color:var(--slate);padding-right:0}
 .chips.over{background:#241f14;outline:2px dashed var(--sodium);outline-offset:-6px}
 .empty{color:var(--slate);font-size:13px;padding:4px 2px}
 .dwell{padding:0 12px 12px;display:none}
@@ -760,22 +788,25 @@ function buildSlots(){
                      return ` &middot; ${mw}×${mh} to ${xw}×${xh}${limitNote(s.modules)}`; })()}${
             (() => { const w = shapeWhy(s.w, s.h, s.modules);
                      return w ? ` &middot; <b class="warn">${w}</b>` : ""; })()}</div></div>
-        <div class="modes" data-id="${s.id}">
-          <span data-mode="single"   class="${s.mode==="single"?"on":""}">One</span>
-          <span data-mode="takeover" class="${s.mode==="takeover"?"on":""}">Takeover</span>
-          <span data-mode="rotate"   class="${s.mode==="rotate"?"on":""}">Rotate</span>
-        </div>
+        ${s.modules.length > 1
+          ? `<div class="modes" data-id="${s.id}">
+               <span data-mode="takeover" class="${s.mode!=="rotate"?"on":""}">Takeover</span>
+               <span data-mode="rotate"   class="${s.mode==="rotate"?"on":""}">Rotate</span>
+             </div>`
+          : `<div class="modes solo"><span>One</span></div>`}
       </div>
       <div class="chips" data-slot="${s.id}">
         ${s.modules.length
           ? s.modules.map((k,i) => `<div class="chip" draggable="true" data-mod="${k}">
-              ${s.mode!=="rotate" ? `<span class="ord">${i+1}</span>` : ""}${label(k)}<span class="rm" data-rm="${k}" title="Remove">&times;</span></div>`).join("")
+              ${s.mode!=="rotate" ? `<span class="ord">${i+1}</span>` : ""}${label(k)}${
+              s.mode!=="rotate" && i > 0 ? `<span class="up" data-up="${k}" title="Move up">&#9650;</span>` : ""
+              }<span class="rm" data-rm="${k}" title="Remove">&times;</span></div>`).join("")
           : `<div class="empty">Drag a module here</div>`}
       </div>
-      <div class="dwell">
+      ${s.mode === "rotate" ? `<div class="dwell">
         <div class="lb"><span>Seconds each</span><b>${s.dwell}</b></div>
         <input type="range" min="{{DMIN}}" max="{{DMAX}}" value="${s.dwell}" data-dwell="${s.id}">
-      </div>
+      </div>` : ""}
     </div>`).join("");
   $("#off").innerHTML = L.off.length
     ? L.off.map(k => `<div class="chip" draggable="true" data-mod="${k}">${label(k)}</div>`).join("")
@@ -1103,19 +1134,33 @@ function growToFit(s, mods){
 }
 
 function moveMod(key, toSlot){
-  snapshot();
   const from = L.slots.find(s => s.modules.includes(key));
+  /* Dropping a chip back where it already is used to remove it and push it
+     onto the end of its own list — a silent demotion of the thing you were
+     trying to hold onto, and the only reordering the editor had. Order is
+     edited with the arrow now, so this is a no-op. */
+  if(from && toSlot === from.id) return;
   if(toSlot !== "__off__"){
     const s = slotOf(toSlot);
     if(!s) return;
-    if(s !== from && !growToFit(s, s.modules.concat([key]))){
-      history.pop(); $("#undo").disabled = !history.length;
-      const why = shapeWhy(s.w, s.h, s.modules.concat([key]));
+    const want = s.modules.concat([key]);
+    /* Two modules can want shapes with no box in common — Wire needs at
+       least 5:1 and Racing at most 4.5:1. That was accepted, and then the
+       slot rendered badly forever with only a small warning in the panel. */
+    const [lo, hi] = slotAspect(want);
+    if(lo > hi){
+      mark(label(key) + " and " + s.modules.map(label).join(", ") +
+           " want shapes that don't overlap", "bad");
+      return;
+    }
+    if(s !== from && !growToFit(s, want)){
+      const why = shapeWhy(s.w, s.h, want);
       mark(label(key) + " doesn't fit that slot — " +
            (why || "no room to grow it"), "bad");
       return;
     }
   }
+  snapshot();
   L.slots.forEach(s => { const i = s.modules.indexOf(key); if(i >= 0) s.modules.splice(i,1); });
   L.off = L.off.filter(k => k !== key);
   if(toSlot === "__off__") L.off.push(key);
@@ -1124,6 +1169,8 @@ function moveMod(key, toSlot){
     s.modules.push(key);
     if(s.modules.length > 1 && s.mode === "single") s.mode = "takeover";
   }
+  // Mirror sanitize(): a slot back down to one module has no mode to be in.
+  L.slots.forEach(s => { if(s.modules.length <= 1) s.mode = "single"; });
   // Removing the largest occupant leaves the slot oversized, which is fine —
   // shrinking it automatically would move things the user didn't ask to move.
   touch(); build();
@@ -1167,7 +1214,7 @@ document.addEventListener("pointerdown", e => {
   // removal. Both fire, both call moveMod(), both push an undo snapshot —
   // one tap ends up two undo-steps deep, for a button whose entire point
   // was to be a single unambiguous action.
-  if(e.target.closest(".rm")) return;
+  if(e.target.closest(".rm") || e.target.closest(".up")) return;
   const c = e.target.closest(".chip");
   if(!c) return;
   tdrag = {key: c.dataset.mod, node: c, x: e.clientX, y: e.clientY, moved: false};
@@ -1196,19 +1243,40 @@ document.addEventListener("pointerup", e => {
 });
 
 /* ---------------------------------------------------------------- controls */
+function promote(key){
+  const s = L.slots.find(x => x.modules.includes(key));
+  if(!s) return;
+  const i = s.modules.indexOf(key);
+  if(i <= 0) return;
+  snapshot();
+  s.modules.splice(i, 1);
+  s.modules.splice(i - 1, 0, key);
+  touch(label(key) + " moved up — first with something to show wins");
+  build();
+}
+
 $("#slots").addEventListener("click", e => {
+  const up = e.target.closest(".up");
+  if(up){ promote(up.dataset.up); return; }
   const rm = e.target.closest(".rm");
   if(rm){ moveMod(rm.dataset.rm, "__off__"); return; }
   const m = e.target.closest(".modes span");
-  if(m){
+  if(m && m.dataset.mode){
     const s = slotOf(e.target.closest(".modes").dataset.id);
+    if(!s || s.mode === m.dataset.mode) return;
+    snapshot();
     s.mode = m.dataset.mode;
-    if(s.mode === "single" && s.modules.length > 1)
-      mark("One shows only the first module — the rest stay hidden");
-    touch(); build(); return;
+    touch(m.dataset.mode === "rotate"
+      ? "Rotating — each module gets the slot for the dwell below"
+      : "Takeover — the first module with something to show keeps the slot");
+    build(); return;
   }
+  /* Guard the rebuild. Every click anywhere in a slot row used to re-render
+     the whole panel, which threw away the dwell slider you were touching. */
   const row = e.target.closest(".sl");
-  if(row && row.dataset.id){ sel = row.dataset.id; $("#delslot").disabled = false; build(); }
+  if(row && row.dataset.id && sel !== row.dataset.id){
+    sel = row.dataset.id; $("#delslot").disabled = false; build();
+  }
 });
 $("#slots").addEventListener("input", e => {
   const id = e.target.dataset.dwell;
@@ -1218,6 +1286,12 @@ $("#slots").addEventListener("input", e => {
   touch();
 });
 
+/* Options were the one kind of edit Undo couldn't reach, so pressing it after
+   nudging a slider silently undid whichever slot move came before instead.
+   pointerdown fires once per drag; input fires on every tick. */
+$("#opts").addEventListener("pointerdown", e => {
+  if(e.target.matches('input[type="range"],input[type="color"]')) snapshot();
+});
 $("#opts").addEventListener("input", e => {
   const k = e.target.dataset.mod, name = e.target.dataset.opt;
   if(!k || !name) return;
@@ -1246,13 +1320,17 @@ $("#opts").addEventListener("click", e => {
   const c = e.target.closest(".ochip");
   if(!c) return;
   const k = c.dataset.mod;
+  snapshot();
   L.opts[k] = L.opts[k] || {};
   if(c.dataset.multi){
     const n = c.dataset.multi;
     const cur = Array.isArray(L.opts[k][n]) ? L.opts[k][n].slice() : [];
     const i = cur.indexOf(c.dataset.val);
     if(i < 0) cur.push(c.dataset.val); else cur.splice(i,1);
-    if(!cur.length){ mark("Keep at least one", "bad"); return; }
+    if(!cur.length){
+      history.pop(); $("#undo").disabled = !history.length;
+      mark("Keep at least one", "bad"); return;
+    }
     L.opts[k][n] = cur;
   }else L.opts[k][c.dataset.opt] = c.dataset.val;
   touch(); buildOpts();

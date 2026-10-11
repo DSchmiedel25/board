@@ -1027,15 +1027,31 @@ def screen_jellyfin(dirt, bath, wx, cal, phase=0):
 
 ORDER_TOP = 20
 ORDER_ROW_H = 9
-ORDER_STEP = 3             # animation frames per vertical pixel
+ORDER_STEP = 1             # animation frames per vertical pixel
+
+
+_race_at = [0]            # advances once per Race field visit
+
+
+def race_candidates(nc):
+    """Prefer live races; otherwise cycle available grids and results."""
+    fields = [f for f in nc.get("race_fields") or [] if f.get("rows")]
+    if fields:
+        live = [f for f in fields if f.get("state") == "in"]
+        return live or fields
+    fld = nc.get("field") or {}
+    pod = nc.get("podium") or {}
+    rows = fld.get("rows") or [list(row) + [""] for row in pod.get("top", [])]
+    return [{**(fld if fld.get("rows") else pod), "series": "CUP", "rows": rows}] if rows else []
 
 
 def race_order(nc):
-    """Full field, with compatibility for old cached top-three results."""
-    fld = nc.get("field") or {}
-    pod = nc.get("podium") or {}
-    return (fld.get("rows") or [list(row) + [""] for row in pod.get("top", [])],
-            fld if fld.get("rows") else pod)
+    """Selected series, with compatibility for older Cup-only data."""
+    fields = race_candidates(nc)
+    if not fields:
+        return [], {}
+    field = fields[_race_at[0] % len(fields)]
+    return field["rows"], field
 
 
 def order_span(rows):
@@ -1047,7 +1063,7 @@ def screen_podium(dirt, bath, wx, cal, phase=0):
     rows, info = race_order(wx.get("nascar") or {})
     img, d = canvas()
     # The large coloured header is gone. Context never moves with the field.
-    venue = info.get("venue") or "CUP"
+    venue = info.get("series", "CUP") + " " + (info.get("venue") or "")
     while text_width(venue, 1) > 62:
         venue = venue[:-1]
     draw_centered(d, venue, 2, SODIUM, 1)
@@ -1164,7 +1180,7 @@ def settings():
     as a separate process in the first place.
     """
     d = {"screens": None, "pin": None, "brightness": "auto",
-         "dwell": {}, "command": None, "command_id": 0}
+         "dwell": {}, "race_scroll_speed": 5, "command": None, "command_id": 0}
     try:
         with open(os.path.join(DATA_DIR, SCREENS_FILE)) as f:
             saved = json.load(f)
@@ -1194,6 +1210,9 @@ def settings():
                       if k in SCREENS and str(v).isdigit()
                       and DWELL_MIN <= int(v) <= DWELL_MAX}
 
+    speed = saved.get("race_scroll_speed", 5)
+    if isinstance(speed, int) and not isinstance(speed, bool):
+        d["race_scroll_speed"] = max(2, min(12, speed))
     d["command"] = saved.get("command")
     d["command_id"] = saved.get("command_id") or 0
     return d
@@ -1506,7 +1525,7 @@ def fetch_jellyfin():
 PODIUM_FILE = "last_podium.json"
 
 
-def keep_podium(nc):
+def _keep_cup_podium(nc):
     """Remember the most recent finished race.
 
     ESPN's events[0] is the *current* race, so a result only lives there
@@ -1538,6 +1557,46 @@ def keep_podium(nc):
         nc["field"] = saved.get("field")
     except (OSError, ValueError):
         pass
+    return nc
+
+
+RACE_FIELDS_FILE = "last_race_fields.json"
+
+
+def keep_podium(nc):
+    """Keep a finished field per series without caching live running orders."""
+    nc = _keep_cup_podium(nc)
+    path = os.path.join(DATA_DIR, RACE_FIELDS_FILE)
+    try:
+        with open(path) as f:
+            saved = json.load(f)
+        if not isinstance(saved, dict):
+            saved = {}
+    except (OSError, ValueError):
+        saved = {}
+    current = {f["series"]: f for f in nc.get("race_fields") or []
+               if f.get("series") in ("CUP", "XFN", "TRK") and f.get("rows")}
+    # Migrate a previous Cup-only result cache when upgrading.
+    cup = nc.get("field") or {}
+    if "CUP" not in current and cup.get("rows"):
+        current["CUP"] = {**cup, "series": "CUP",
+                          "state": cup.get("state") or ("post" if cup.get("kind") == "result" else "pre")}
+    for series, field in current.items():
+        if field.get("state") == "post":
+            saved[series] = field
+    if saved:
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(saved, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    nc["race_fields"] = [current.get(series) or saved[series]
+                         for series in ("CUP", "XFN", "TRK")
+                         if series in current or (isinstance(saved.get(series), dict)
+                                                  and saved[series].get("rows"))]
     return nc
 
 
@@ -1945,8 +2004,15 @@ def main():
         last_fetch = time.time()
         last_state = dirt.get("state")
         last_cmd = [0]
+        race_visits = 0
 
         while True:
+            # Animated/pinned screens previously bypassed the sliced-sleep
+            # poll below. Live order must keep refreshing in that mode too.
+            refresh_after = 60 if (wx.get("nascar") or {}).get("live") else poll_secs()
+            if time.time() - last_fetch >= refresh_after:
+                dirt, _, wx, cal = fetch()
+                last_fetch = time.time()
             cfg = settings()
 
             # A command is a one-shot: acted on once, then remembered by id so
@@ -1974,8 +2040,11 @@ def main():
                 # nothing playing means no Jellyfin screen at all
                 if name == "jellyfin" and not bath.get("playing"):
                     continue
-                if name == "podium" and not (wx.get("nascar") or {}).get("podium"):
-                    continue
+                if name == "podium":
+                    if not race_candidates(wx.get("nascar") or {}):
+                        continue
+                    _race_at[0] = race_visits
+                    race_visits += 1
                 if name == "photo":
                     if not photo_list():
                         continue
@@ -1997,18 +2066,34 @@ def main():
                         rows, _ = race_order(wx.get("nascar") or {})
                         # Show every position before rotating away, even at
                         # the default short dwell. No title-length cap here.
-                        run = max(run, order_span(rows) * ORDER_STEP * MARQUEE_STEP)
+                        run = max(run, order_span(rows) / cfg["race_scroll_speed"])
                     interval = WEATHER_STEP if name == "weather" else MARQUEE_STEP
                     steps = math.ceil(run / interval)
                     started = time.monotonic()
-                    for i in range(steps):
-                        if name == "weather":
+                    scroll_epoch = 0
+                    i = -1
+                    while i + 1 < steps:
+                        i += 1
+                        if name in ("weather", "podium"):
                             elapsed = time.monotonic() - started
                             if elapsed >= run:
                                 break
-                            phase = int(elapsed / WEATHER_STEP)
+                            phase = (int(elapsed / WEATHER_STEP) if name == "weather"
+                                     else int((elapsed - scroll_epoch) * cfg["race_scroll_speed"]) * MARQUEE_PX * ORDER_STEP)
                         else:
                             phase = i * MARQUEE_PX
+                        if name == "podium" and time.time() - last_fetch >= 60:
+                            previous = race_order(wx.get("nascar") or {})[1].get("series")
+                            dirt, _, wx, cal = fetch()
+                            last_fetch = time.time()
+                            rows, info = race_order(wx.get("nascar") or {})
+                            if info.get("series") != previous:
+                                # A newly live series starts at the leader,
+                                # and gets enough time to show its full field.
+                                scroll_epoch = elapsed
+                                phase = 0
+                                run = max(run, elapsed + order_span(rows) / cfg["race_scroll_speed"])
+                                steps = math.ceil(run / interval)
                         frame = SCREENS[name](dirt, bath, wx, cal, phase=phase)
                         dev.push_image(frame)
                         mirror(frame)

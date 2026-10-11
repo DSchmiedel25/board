@@ -73,7 +73,7 @@ SCREENS = [
     ("flag",     "DirtCheck",   "Albany-Saratoga, Lebanon Valley, Fonda"),
     ("weather",  "Weather",     "Now and the three-day forecast"),
     ("nascar",   "NASCAR",      "Next race for Cup, Xfinity and Trucks"),
-    ("podium",   "Race field",  "Starting grid or finishing order"),
+    ("podium",   "Race field",  "Cup, Xfinity and Trucks — live order, grids and finishes"),
     ("radar",    "Radar",       "Rain tracking \u2014 home pinned"),
     ("photo",    "Photos",      "Your uploads, one per turn"),
     ("services", "Services",    "Uptime Kuma \u2014 red when something's down"),
@@ -89,7 +89,7 @@ DWELL_HINT = {"flag": 14, "weather": 14, "nascar": 12, "podium": 10,
               "radar": 10, "photo": 12, "services": 10, "jellyfin": 18}
 
 DEFAULTS = {"screens": {k: True for k in KEYS}, "pin": None,
-            "brightness": "auto", "dwell": {}, "command": None,
+            "brightness": "auto", "dwell": {}, "race_scroll_speed": 5, "command": None,
             "command_id": 0}
 
 
@@ -108,6 +108,9 @@ def load():
     dw = saved.get("dwell")
     out["dwell"] = {k: int(v) for k, v in (dw or {}).items()
                     if k in KEYS and str(v).isdigit()}
+    speed = saved.get("race_scroll_speed", 5)
+    if isinstance(speed, int) and not isinstance(speed, bool):
+        out["race_scroll_speed"] = max(2, min(12, speed))
     out["command_id"] = saved.get("command_id") or 0
     return out
 
@@ -885,7 +888,7 @@ ROW = """<div class="card"><div class="row">
   <input type="range" name="d_{{KEY}}" min="{{DMIN}}" max="{{DMAX}}"
          value="{{DVAL}}" data-for="{{KEY}}">
   <span class="dval" id="dv_{{KEY}}">{{DVAL}}s</span>
-</div></div>"""
+</div>{{SPEED}}</div>"""
 
 CHIP = """<label class="chip"><input type="radio" name="{{GROUP}}" value="{{VAL}}" {{ON}}>
   <span>{{LABEL}}</span></label>"""
@@ -918,6 +921,10 @@ class Handler(BaseHTTPRequestHandler):
                .replace("{{DIS}}", "disabled" if pinned else "")
                .replace("{{DMIN}}", str(DWELL_MIN)).replace("{{DMAX}}", str(DWELL_MAX))
                .replace("{{DVAL}}", str(cfg["dwell"].get(k, DWELL_HINT.get(k, 12))))
+               .replace("{{SPEED}}", ('<div class="desc" style="margin-top:12px">Scroll speed</div>'
+                        '<div class="chips">' + chips("race_scroll_speed",
+                        [(2, "Slow"), (5, "Normal"), (8, "Fast"), (12, "Fastest")],
+                        cfg["race_scroll_speed"]) + '</div>') if k == "podium" else "")
             for k, l, d in SCREENS)
 
         body = (PAGE.replace("{{ROWS}}", rows)
@@ -1191,6 +1198,9 @@ class Handler(BaseHTTPRequestHandler):
                 v = form.get("d_" + k, "")
                 if v.isdigit():
                     cfg["dwell"][k] = max(DWELL_MIN, min(DWELL_MAX, int(v)))
+            speed = form.get("race_scroll_speed", str(cfg["race_scroll_speed"]))
+            if speed.isdigit():
+                cfg["race_scroll_speed"] = max(2, min(12, int(speed)))
             cfg["pin"] = form.get("pin") or None
             b = form.get("brightness", "auto")
             cfg["brightness"] = b if b == "auto" else int(b)

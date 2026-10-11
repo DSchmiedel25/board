@@ -222,3 +222,28 @@ module, not the drawing code.
   runs for the wall dashboard's calendar panel.
 - If the kiosk page comes up blank, check `http://localhost/data/next.json`
   loads on the Pi first. A 404 there means the cron job hasn't run yet.
+
+### Pixoo scrolling race order
+
+The `podium` screen now uses the full field for Cup, Xfinity and Trucks for running order, finishing
+order, and the starting lineup. The large coloured header has been removed;
+compact race context stays above the scrolling lower panel. Lists that fit
+remain still. Longer lists scroll vertically and complete one full cycle
+before rotation (about 74 seconds for 40 drivers at Normal speed). The existing `nascar`
+schedule screen, wall display, result cache, and screen controls are unchanged.
+Old top-three result caches still display until a full field is fetched.
+Use `python3 -m unittest test_race_scroll` to run the offline regression checks.
+Scrolling runs in `--loop`; `--once`, `--screen podium`, and PNG previews show
+one still frame, as they do for other scrolling screens.
+
+The Race field card in the control panel has Slow, Normal, Fast and Fastest
+scroll-speed buttons. Changes save automatically and apply the next time
+the race screen starts. Update both board.py and control.py, restart the
+pixoo and control services, and reload the page to install this control.
+
+Race field prioritizes the live series automatically. If multiple series
+are live, it cycles through them on successive visits. When none are live,
+it cycles through available grids and results. The compact context shows
+CUP, XFN or TRK. Finished results are saved separately for each series.
+Live order refreshes every 60 seconds, including while the screen is pinned.
+Install board.py, nascar.py and control.py together for all-series support.

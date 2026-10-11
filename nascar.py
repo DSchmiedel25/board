@@ -228,6 +228,7 @@ def field(doc, limit=40):
         "label": {"post": "Finish", "pre": "Starting lineup",
                   "in": "Running order"}[state],
         "rows": rows,
+        "state": state,
     }
 
 
@@ -253,8 +254,18 @@ def build(docs, now=None, get=None):
     for r in rows:
         r.pop("at", None)
 
+    race_fields = []
+    for label, slug, _ in SERIES:
+        try:
+            order = field((docs or {}).get(slug) or {})
+            if order:
+                race_fields.append({**order, "series": label})
+        except (TypeError, ValueError, KeyError):
+            pass  # one broken field must not hide the other series
+
     cup = (docs or {}).get("nascar-premier")
     return {"rows": rows, "venue": short(venue),
             "live": any(r.get("live") for r in rows),
             "podium": podium(cup) if cup else None,   # top three, for the Pixoo
-            "field": field(cup) if cup else None}     # whole grid, for the wall
+            "field": field(cup) if cup else None,    # Cup grid for the wall
+            "race_fields": race_fields}             # all series for the Pixoo

@@ -330,6 +330,8 @@ def draw_sprite(d, key, x, y, color):
 BAR_H = 16
 LABEL_Y = 58
 
+WEATHER_STEP = 0.08      # target 12.5 fps; one motion unit per frame
+
 MARQUEE_STEP = 0.22      # seconds between frames while a title scrolls
 MARQUEE_PX = 2           # pixels per frame
 MARQUEE_MAX = 34         # seconds; cap so one long title can't own the board
@@ -1214,7 +1216,7 @@ def rotation(now=None, dwell=None):
     """
     now = now or dt.datetime.now()
     if is_race_night(now):
-        plan = [("flag", 30), ("weather", 10), ("nascar", 8), ("radar", 8),
+        plan = [("flag", 30), ("weather", 10), ("nascar", 8), ("podium", 10), ("radar", 8),
                 ("photo", 8), ("services", 7), ("jellyfin", 16)]
     elif MORNING[0] <= now.hour < MORNING[1]:
         plan = [("weather", 18), ("flag", 12), ("nascar", 10), ("podium", 8),
@@ -1996,13 +1998,27 @@ def main():
                         # Show every position before rotating away, even at
                         # the default short dwell. No title-length cap here.
                         run = max(run, order_span(rows) * ORDER_STEP * MARQUEE_STEP)
-                    steps = math.ceil(run / MARQUEE_STEP)
+                    interval = WEATHER_STEP if name == "weather" else MARQUEE_STEP
+                    steps = math.ceil(run / interval)
+                    started = time.monotonic()
                     for i in range(steps):
-                        frame = SCREENS[name](dirt, bath, wx, cal,
-                                              phase=i * MARQUEE_PX)
+                        if name == "weather":
+                            elapsed = time.monotonic() - started
+                            if elapsed >= run:
+                                break
+                            phase = int(elapsed / WEATHER_STEP)
+                        else:
+                            phase = i * MARQUEE_PX
+                        frame = SCREENS[name](dirt, bath, wx, cal, phase=phase)
                         dev.push_image(frame)
-                        mirror(frame)          # animated frames mirror too
-                        time.sleep(MARQUEE_STEP)
+                        mirror(frame)
+                        if name == "weather":
+                            # Sending the image already takes time. Avoid
+                            # adding a full interval on top of that latency.
+                            remaining = interval - (time.monotonic() - started) % interval
+                            time.sleep(min(remaining, max(0, run - (time.monotonic() - started))))
+                        else:
+                            time.sleep(interval)
                     continue
 
                 push(dev, SCREENS[name](dirt, bath, wx, cal),

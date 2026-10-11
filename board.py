@@ -704,6 +704,9 @@ def is_animated(name, dirt, bath, wx):
     """Screens that move on their own, independently of scrolling text.
     Weather moves whenever there's something to see in the sky; the flag
     screen moves only when a track is actually green."""
+    if name == "podium":
+        rows, _ = race_order(wx.get("nascar") or {})
+        return len(rows) * ORDER_ROW_H > 64 - ORDER_TOP
     if name == "weather":
         return sky_name(wx.get("code", 0)) in ("rain", "snow", "storms", "night")
     if name == "flag":
@@ -1020,37 +1023,59 @@ def screen_jellyfin(dirt, bath, wx, cal, phase=0):
     return img
 
 
+ORDER_TOP = 20
+ORDER_ROW_H = 9
+ORDER_STEP = 3             # animation frames per vertical pixel
+
+
+def race_order(nc):
+    """Full field, with compatibility for old cached top-three results."""
+    fld = nc.get("field") or {}
+    pod = nc.get("podium") or {}
+    return (fld.get("rows") or [list(row) + [""] for row in pod.get("top", [])],
+            fld if fld.get("rows") else pod)
+
+
+def order_span(rows):
+    return len(rows) * ORDER_ROW_H + ORDER_ROW_H
+
+
 def screen_podium(dirt, bath, wx, cal, phase=0):
-    """Top three from the Cup weekend — starting grid before the race,
-    finishing order after. Only in rotation when there's something to show."""
-    pod = (wx.get("nascar") or {}).get("podium") or {}
+    """Fixed compact context above a clipped, vertically scrolling field."""
+    rows, info = race_order(wx.get("nascar") or {})
     img, d = canvas()
+    # The large coloured header is gone. Context never moves with the field.
+    venue = info.get("venue") or "CUP"
+    while text_width(venue, 1) > 62:
+        venue = venue[:-1]
+    draw_centered(d, venue, 2, SODIUM, 1)
+    label = info.get("label") or "Last race"
+    if info.get("kind") == "result":
+        label = "FINISH ORDER"
+    draw_centered(d, label.upper(), 11, SLATE, 1)
+    d.line([1, 18, 62, 18], fill=RAIL)
+    if not rows:
+        draw_centered(d, "NO ORDER", 36, SLATE, 1)
+        return img
 
-    d.rectangle([0, 0, 63, BAR_H], fill=SODIUM)
-    word = pod.get("venue", "RESULT")
-    sc = fit_scale(word, BAR_SCALE)
-    tw = text_width(word, sc)
-    x = max(1, (64 - (SPRITE_W + 3 + tw)) // 2)
-    draw_sprite(d, "NASCAR", x, 3, LOAM)
-    _marquee(img, word, 4 + (BAR_SCALE - sc) * 2, LOAM, sc, phase,
-             x0=x + SPRITE_W + 3, x1=62)
-    d = ImageDraw.Draw(img)
-
-    # Gold, silver and bronze only on an actual finish. On a starting grid
-    # they would announce a win nobody has taken yet.
-    MEDAL = [(255, 214, 92), (198, 206, 216), (198, 132, 72)]
-    grid = pod.get("kind") != "result"
-    y = 22
-    for i, (pos, name) in enumerate(pod.get("top", [])[:3]):
-        ink = RAIL if grid else MEDAL[i]
-        d.rectangle([1, y, 8, y + 8], fill=ink)
-        draw_text(d, pos, 4, y + 2, DUST if grid else (20, 16, 10), 1)
-        draw_text(d, name[:11], 12, y + 2, DUST, 1)
-        y += 13
-
-    # podium() now returns grids as well as results, so the footer has to
-    # say which one this is instead of always claiming "LAST RACE"
-    draw_footer(img, (pod.get("label") or "LAST RACE").upper(), phase)
+    height = 64 - ORDER_TOP
+    panel = Image.new("RGB", (64, height), LOAM)
+    pd = ImageDraw.Draw(panel)
+    moving = len(rows) * ORDER_ROW_H > height
+    span = order_span(rows)
+    offset = (phase // (MARQUEE_PX * ORDER_STEP)) % span if moving else 0
+    for base in ((-offset, span - offset) if moving else (0,)):
+        for i, row in enumerate(rows):
+            pos, name = str(row[0]), str(row[1])
+            y = base + i * ORDER_ROW_H
+            if y + GH <= 0 or y >= height:
+                continue
+            draw_text(pd, pos, 1, y, SODIUM, 1)
+            # Keep the rank and as much of the driver's name as fits.
+            while text_width(name, 1) > 50:
+                name = name[:-1]
+            draw_text(pd, name, 13, y, DUST, 1)
+    img.paste(panel, (0, ORDER_TOP))
     return img
 
 
@@ -1966,7 +1991,12 @@ def main():
                         # slider is worse than running a second or two long.
                         run = marquee_seconds(got[0], got[1], dwell)
                     dev.set_brightness(brightness_now(cfg["brightness"]))
-                    steps = int(run / MARQUEE_STEP)
+                    if name == "podium":
+                        rows, _ = race_order(wx.get("nascar") or {})
+                        # Show every position before rotating away, even at
+                        # the default short dwell. No title-length cap here.
+                        run = max(run, order_span(rows) * ORDER_STEP * MARQUEE_STEP)
+                    steps = math.ceil(run / MARQUEE_STEP)
                     for i in range(steps):
                         frame = SCREENS[name](dirt, bath, wx, cal,
                                               phase=i * MARQUEE_PX)
